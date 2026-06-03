@@ -66,4 +66,20 @@ void main() {
     );
     expect(material.color, Colors.black);
   });
+
+  testWidgets('Bottom navigation removes bottom safe area', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(padding: EdgeInsets.only(bottom: 34)),
+        child: const KnockGateApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final navigationContext = tester.element(find.byType(NavigationBar));
+    expect(MediaQuery.paddingOf(navigationContext).bottom, 0);
+  });
 }

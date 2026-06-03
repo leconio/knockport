@@ -119,28 +119,33 @@ class _HomePageState extends State<HomePage> {
       ),
       body: SafeArea(
         top: false,
+        bottom: false,
         child: IndexedStack(
           index: _selectedIndex,
           children: [_buildKnockTab(controller), _buildCheckTab(controller)],
         ),
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) {
-          setState(() => _selectedIndex = index);
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.key_outlined),
-            selectedIcon: Icon(Icons.key),
-            label: 'Knock',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.sensors_outlined),
-            selectedIcon: Icon(Icons.sensors),
-            label: 'Check',
-          ),
-        ],
+      bottomNavigationBar: MediaQuery.removePadding(
+        context: context,
+        removeBottom: true,
+        child: NavigationBar(
+          selectedIndex: _selectedIndex,
+          onDestinationSelected: (index) {
+            setState(() => _selectedIndex = index);
+          },
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.key_outlined),
+              selectedIcon: Icon(Icons.key),
+              label: 'Knock',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.sensors_outlined),
+              selectedIcon: Icon(Icons.sensors),
+              label: 'Check',
+            ),
+          ],
+        ),
       ),
     );
   }
