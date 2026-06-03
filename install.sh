@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_NAME="KnockGate"
+DEFAULT_REPO="OWNER/REPO"
+DEFAULT_BRANCH="main"
+INSTALL_DIR="/usr/local/bin"
+
+red() { printf '\033[31m%s\033[0m\n' "$*"; }
+green() { printf '\033[32m%s\033[0m\n' "$*"; }
+yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
+blue() { printf '\033[34m%s\033[0m\n' "$*"; }
+
+die() {
+  red "Error: $*"
+  exit 1
+}
+
+require_root() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    die "please run as root, for example: curl -fsSL <install-url> | sudo bash"
+  fi
+}
+
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+build_raw_base() {
+  local repo="${KNOCKGATE_REPO:-$DEFAULT_REPO}"
+  local branch="${KNOCKGATE_BRANCH:-$DEFAULT_BRANCH}"
+
+  if [[ -n "${KNOCKGATE_RAW_BASE:-}" ]]; then
+    printf '%s\n' "${KNOCKGATE_RAW_BASE%/}"
+    return
+  fi
+
+  if [[ "$repo" == "$DEFAULT_REPO" ]]; then
+    die "repository is not configured. Set KNOCKGATE_REPO=OWNER/REPO or replace OWNER/REPO after publishing."
+  fi
+
+  printf 'https://raw.githubusercontent.com/%s/%s\n' "$repo" "$branch"
+}
+
+download_file() {
+  local raw_base="$1"
+  local source_name="$2"
+  local target_path="$3"
+
+  blue "Downloading ${source_name}..."
+  curl -fsSL "${raw_base}/${source_name}" -o "$target_path"
+  chmod 0755 "$target_path"
+}
+
+main() {
+  require_root
+  need_cmd curl
+  need_cmd install
+  need_cmd mktemp
+
+  local raw_base tmpdir
+  raw_base="$(build_raw_base)"
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "$tmpdir"' EXIT
+
+  blue "${PROJECT_NAME} installer"
+  yellow "Source: ${raw_base}"
+
+  download_file "$raw_base" "knockgate.sh" "${tmpdir}/knockgate"
+  download_file "$raw_base" "rfcjp-knock.sh" "${tmpdir}/rfcjp-knock"
+  download_file "$raw_base" "rfcjp-check.sh" "${tmpdir}/rfcjp-check"
+
+  install -m 0755 "${tmpdir}/knockgate" "${INSTALL_DIR}/knockgate"
+  install -m 0755 "${tmpdir}/rfcjp-knock" "${INSTALL_DIR}/rfcjp-knock"
+  install -m 0755 "${tmpdir}/rfcjp-check" "${INSTALL_DIR}/rfcjp-check"
+
+  green "Installed:"
+  printf '  %s\n' \
+    "${INSTALL_DIR}/knockgate" \
+    "${INSTALL_DIR}/rfcjp-knock" \
+    "${INSTALL_DIR}/rfcjp-check"
+
+  yellow "Run the server manager with: sudo knockgate"
+}
+
+main "$@"
