@@ -2,8 +2,7 @@
 set -euo pipefail
 
 PROJECT_NAME="KnockGate"
-DEFAULT_REPO="OWNER/REPO"
-DEFAULT_BRANCH="main"
+DEFAULT_REPO="leconio/knockport"
 INSTALL_DIR="/usr/local/bin"
 INSTALL_CLIENT_HELPERS="${INSTALL_CLIENT_HELPERS:-0}"
 
@@ -27,6 +26,14 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
 }
 
+detect_arch() {
+  case "$(uname -m)" in
+    x86_64|amd64) echo amd64 ;;
+    aarch64|arm64) echo arm64 ;;
+    *) die "unsupported architecture: $(uname -m)" ;;
+  esac
+}
+
 detect_pkg_family() {
   if [[ ! -r /etc/os-release ]]; then
     die "unsupported Linux distribution: missing /etc/os-release"
@@ -48,98 +55,80 @@ detect_pkg_family() {
   esac
 }
 
-install_build_deps() {
+install_runtime_deps() {
   local family
   family="$(detect_pkg_family)"
   case "$family" in
     apt)
-      if ! DEBIAN_FRONTEND=noninteractive apt-get install -y golang-go gcc libc6-dev libpcap-dev nftables iproute2 qrencode; then
+      if ! DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl tar nftables iproute2 libpcap0.8 qrencode; then
         apt-get update
-        DEBIAN_FRONTEND=noninteractive apt-get install -y golang-go gcc libc6-dev libpcap-dev nftables iproute2 qrencode
+        DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl tar nftables iproute2 libpcap0.8 qrencode
       fi
       ;;
     dnf)
-      dnf install -y golang gcc glibc-devel libpcap-devel nftables iproute qrencode
+      dnf install -y ca-certificates curl tar nftables iproute libpcap qrencode
       ;;
     pacman)
-      pacman -Sy --noconfirm go gcc glibc libpcap nftables iproute2 qrencode
+      pacman -Sy --noconfirm ca-certificates curl tar nftables iproute2 libpcap qrencode
       ;;
   esac
 }
 
-build_raw_base() {
+release_url() {
   local repo="${KNOCKGATE_REPO:-$DEFAULT_REPO}"
-  local branch="${KNOCKGATE_BRANCH:-$DEFAULT_BRANCH}"
+  local arch="$1"
+  local asset="knockgate_linux_${arch}.tar.gz"
 
-  if [[ -n "${KNOCKGATE_RAW_BASE:-}" ]]; then
-    printf '%s\n' "${KNOCKGATE_RAW_BASE%/}"
+  if [[ -n "${KNOCKGATE_ASSET_BASE:-}" ]]; then
+    printf '%s/%s\n' "${KNOCKGATE_ASSET_BASE%/}" "${asset}"
     return
   fi
 
-  if [[ "$repo" == "$DEFAULT_REPO" ]]; then
-    die "repository is not configured. Set KNOCKGATE_REPO=OWNER/REPO or replace OWNER/REPO after publishing."
+  if [[ -n "${KNOCKGATE_VERSION:-}" ]]; then
+    printf 'https://github.com/%s/releases/download/%s/%s\n' "${repo}" "${KNOCKGATE_VERSION}" "${asset}"
+  else
+    printf 'https://github.com/%s/releases/latest/download/%s\n' "${repo}" "${asset}"
   fi
-
-  printf 'https://raw.githubusercontent.com/%s/%s\n' "$repo" "$branch"
 }
 
-download_file() {
-  local raw_base="$1"
-  local source_name="$2"
-  local target_path="$3"
-
-  blue "Downloading ${source_name}..."
-  curl -fsSL "${raw_base}/${source_name}" -o "$target_path"
-  chmod 0755 "$target_path"
-}
-
-download_source_tree() {
-  local tmpdir="$1"
+raw_base() {
   local repo="${KNOCKGATE_REPO:-$DEFAULT_REPO}"
-  local branch="${KNOCKGATE_BRANCH:-$DEFAULT_BRANCH}"
-  local archive="${tmpdir}/source.tar.gz"
-
-  if [[ "$repo" == "$DEFAULT_REPO" ]]; then
-    die "repository is not configured. Set KNOCKGATE_REPO=OWNER/REPO or replace OWNER/REPO after publishing."
+  local branch="${KNOCKGATE_BRANCH:-main}"
+  if [[ -n "${KNOCKGATE_RAW_BASE:-}" ]]; then
+    printf '%s\n' "${KNOCKGATE_RAW_BASE%/}"
+  else
+    printf 'https://raw.githubusercontent.com/%s/%s\n' "${repo}" "${branch}"
   fi
-
-  blue "Downloading source archive..."
-  curl -fsSL "https://github.com/${repo}/archive/refs/heads/${branch}.tar.gz" -o "$archive"
-  tar -xzf "$archive" -C "$tmpdir" --strip-components=1
 }
 
 main() {
   require_root
-  need_cmd curl
-  need_cmd install
+  need_cmd uname
   need_cmd mktemp
-  need_cmd tar
 
-  local raw_base tmpdir
-  raw_base="$(build_raw_base)"
+  local arch url tmpdir
+  arch="$(detect_arch)"
+  url="$(release_url "$arch")"
   tmpdir="$(mktemp -d)"
   trap 'rm -rf "$tmpdir"' EXIT
 
   blue "${PROJECT_NAME} installer"
-  yellow "Source: ${raw_base}"
+  yellow "Binary asset: ${url}"
 
-  install_build_deps
-  download_source_tree "$tmpdir"
-  (cd "$tmpdir" && go build -trimpath -ldflags "-s -w" -o "${tmpdir}/knockgate" ./cmd/knockgate)
-  install -m 0755 "${tmpdir}/knockgate" "${INSTALL_DIR}/knockgate"
+  install_runtime_deps
+
+  curl -fsSL "$url" -o "${tmpdir}/knockgate.tar.gz"
+  tar -xzf "${tmpdir}/knockgate.tar.gz" -C "$tmpdir"
+  install -m 0755 "${tmpdir}/knockgate_linux_${arch}/knockgate" "${INSTALL_DIR}/knockgate"
 
   green "Installed:"
   printf '  %s\n' "${INSTALL_DIR}/knockgate"
 
   if [[ "${INSTALL_CLIENT_HELPERS}" == "1" ]]; then
-    download_file "$raw_base" "rfcjp-knock.sh" "${tmpdir}/rfcjp-knock"
-    download_file "$raw_base" "rfcjp-check.sh" "${tmpdir}/rfcjp-check"
-    install -m 0755 "${tmpdir}/rfcjp-knock" "${INSTALL_DIR}/rfcjp-knock"
-    install -m 0755 "${tmpdir}/rfcjp-check" "${INSTALL_DIR}/rfcjp-check"
+    install -m 0755 "${tmpdir}/knockgate_linux_${arch}/rfcjp-knock.sh" "${INSTALL_DIR}/rfcjp-knock"
+    install -m 0755 "${tmpdir}/knockgate_linux_${arch}/rfcjp-check.sh" "${INSTALL_DIR}/rfcjp-check"
     green "Installed optional client helpers:"
-    printf '  %s\n' \
-      "${INSTALL_DIR}/rfcjp-knock" \
-      "${INSTALL_DIR}/rfcjp-check"
+    printf '  %s\n' "${INSTALL_DIR}/rfcjp-knock" "${INSTALL_DIR}/rfcjp-check"
   else
     yellow "Client helpers were not installed. Set INSTALL_CLIENT_HELPERS=1 on client machines if needed."
   fi

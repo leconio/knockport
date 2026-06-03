@@ -6,7 +6,13 @@
 
 KnockGate is a Go server that captures UDP knock packets with `libpcap`, advances state by port order, validates only the final step with `HMAC-SHA256 + timestamp + nonce`, and temporarily adds the source IPv4 address to an `nftables` timeout set.
 
-It does not listen on the knock ports, does not use `knockd`, and does not take over your existing firewall. KnockGate only manages its own `table inet knockgate` and only pre-filters the protected TCP ports you choose. SSH rules are not read, prompted for, or modified.
+It does not listen on the knock ports, does not use `knockd`, and does not take over your existing firewall. KnockGate only manages its own `table inet knockgate` and only pre-filters the protected ports/protocols you choose. SSH rules are not read, prompted for, or modified.
+
+Protected port syntax:
+
+- `2345` protects both `2345/tcp` and `2345/udp`.
+- `2345/tcp` protects TCP only.
+- `2345/udp` protects UDP only.
 
 ## How It Works
 
@@ -19,8 +25,8 @@ The server runs as:
 It captures UDP packets on the configured interface. Earlier steps only advance the ordered port sequence. The final step validates:
 
 ```text
-Payload:    KG1|step|unix_timestamp|nonce|hmac
-HMAC input: KG1|udp_port|step|unix_timestamp|nonce
+Payload:    compact binary K1 + step + unix_timestamp + nonce + truncated_hmac
+HMAC input: K1 + udp_port + step + unix_timestamp + nonce
 ```
 
 After the ordered sequence succeeds:
@@ -41,8 +47,11 @@ table inet knockgate {
     chain input {
         type filter hook input priority -150; policy accept;
 
-        ip saddr @knock_allow_temp_v4 tcp dport { PROTECTED_PORTS } accept
-        tcp dport { PROTECTED_PORTS } drop
+        ip saddr @knock_allow_temp_v4 tcp dport { PROTECTED_TCP_PORTS } accept
+        tcp dport { PROTECTED_TCP_PORTS } drop
+
+        ip saddr @knock_allow_temp_v4 udp dport { PROTECTED_UDP_PORTS } accept
+        udp dport { PROTECTED_UDP_PORTS } drop
     }
 }
 ```
@@ -64,21 +73,21 @@ Notes:
 - `libpcap`
 - optional `qrencode`
 
-The installer builds the Go binary on the server and installs the needed build dependencies.
+The installer downloads the latest prebuilt Linux release artifact. It does not compile Go on the target server.
 
 ## Install
-
-Manual source build:
-
-```bash
-go build -o knockgate ./cmd/knockgate
-sudo ./knockgate install
-```
 
 One-line install:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh | sudo KNOCKGATE_REPO=leconio/knockport bash
+```
+
+Release downloads:
+
+```bash
+https://github.com/leconio/knockport/releases/latest/download/knockgate_linux_amd64.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_linux_arm64.tar.gz
 ```
 
 After install:
@@ -101,15 +110,16 @@ Or manually:
 ./rfcjp-knock.sh --secret BASE64URL_SECRET SERVER_IP 37708 31114 25880 62009 61086 33854
 ```
 
-Check a protected TCP port:
+Check protected ports:
 
 ```bash
 ./rfcjp-check.sh SERVER_IP 5432
+./rfcjp-check.sh SERVER_IP 5432/tcp 5432/udp
 ```
 
 ## Flutter Client
 
-The [`flutter/`](flutter/) GUI client supports import URLs, QR scanning on Android/iOS/macOS, manual profile edits, UDP-HMAC knocking, and protected TCP port checks.
+The [`flutter/`](flutter/) GUI client supports import URLs, QR scanning on Android/iOS/macOS, manual profile edits, UDP-HMAC knocking, and protected TCP port checks. UDP checks can only send a probe because UDP has no reliable handshake.
 
 ## Uninstall And Clear
 

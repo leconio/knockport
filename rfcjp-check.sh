@@ -1,38 +1,39 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROTECTED_PORT="${PROTECTED_PORT:-5432}"
+PROTECTED_PORTS="${PROTECTED_PORTS:-5432}"
 ORDINARY_PORT="${ORDINARY_PORT:-15555}"
 CHECK_TIMEOUT="${CHECK_TIMEOUT:-3}"
 
 usage() {
     cat <<EOF
 Usage:
-  $(basename "$0") [--verbose] [--timeout SECONDS] SERVER [PORT ...]
+  $(basename "$0") [--verbose] [--timeout SECONDS] SERVER [PORT[/tcp|/udp] ...]
 
-Check TCP connectivity only. This script does not send knock packets.
+Check connectivity only. This script does not send knock packets.
 
-If PORT arguments are provided, only those ports are checked.
-If no PORT arguments are provided, the ordinary/protected default checks run.
+Port syntax:
+  2345      check TCP, then send one UDP probe
+  2345/tcp  check TCP only
+  2345/udp  send one UDP probe only
 
-Defaults:
-  PROTECTED_PORT: ${PROTECTED_PORT}
-  ORDINARY_PORT:  ${ORDINARY_PORT}
-  CHECK_TIMEOUT:  ${CHECK_TIMEOUT}s
+Defaults when no ports are provided:
+  PROTECTED_PORTS: ${PROTECTED_PORTS}
+  ORDINARY_PORT:   ${ORDINARY_PORT}/tcp
+  CHECK_TIMEOUT:   ${CHECK_TIMEOUT}s
 
 Examples:
   $(basename "$0") SERVER_IP
   $(basename "$0") SERVER_IP 5432
-  $(basename "$0") SERVER_IP 22 80 443 5432
-  $(basename "$0") --verbose SERVER_IP 5432
-  $(basename "$0") --timeout 5 SERVER_IP 5432
-  PROTECTED_PORT=5432 ORDINARY_PORT=15555 CHECK_TIMEOUT=2 $(basename "$0") SERVER_IP
+  $(basename "$0") SERVER_IP 5432/tcp 5432/udp
+  $(basename "$0") --timeout 5 SERVER_IP 5432/tcp
 
 Results:
-  OPEN      TCP handshake succeeded. A service is reachable.
-  REFUSED   Firewall likely allowed the path, but no service is listening.
-  FILTERED  Connection timed out. Firewall or network path is dropping.
-  FAILED    nc returned another error.
+  OPEN      TCP handshake succeeded.
+  REFUSED   TCP path reached host, but no service is listening.
+  FILTERED  TCP timed out; usually firewall/network drop.
+  UDP-SENT  UDP has no reliable handshake; packet was sent, not proven open.
+  FAILED    Local tool or network command failed.
 EOF
 }
 
@@ -47,7 +48,7 @@ while [[ "$#" -gt 0 ]]; do
             VERBOSE=1
             shift
             ;;
-        -t|--timeout)
+        -t|--timeout|--timeout-seconds)
             if [[ -z "${2:-}" ]]; then
                 echo "Missing value for ${1}" >&2
                 exit 2
@@ -87,6 +88,32 @@ is_port() {
     [[ "$1" =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 ))
 }
 
+parse_target() {
+    local raw="$1"
+    local port proto
+    if [[ "${raw}" == */* ]]; then
+        port="${raw%/*}"
+        proto="${raw##*/}"
+    else
+        port="${raw}"
+        proto="both"
+    fi
+    proto="$(printf '%s' "${proto}" | tr '[:upper:]' '[:lower:]')"
+    if ! is_port "${port}"; then
+        echo "Invalid port: ${raw}" >&2
+        return 1
+    fi
+    case "${proto}" in
+        tcp|udp|both)
+            printf '%s %s\n' "${port}" "${proto}"
+            ;;
+        *)
+            echo "Invalid protocol in ${raw}; use tcp or udp." >&2
+            return 1
+            ;;
+    esac
+}
+
 run_nc_with_timeout() {
     local port="$1"
     local output_file="$2"
@@ -115,11 +142,8 @@ run_nc_with_timeout() {
 }
 
 try_tcp() {
-    local label="$1"
-    local port="$2"
-    local output
-    local output_file
-    local rc
+    local port="$1"
+    local output output_file rc
 
     output_file="$(mktemp)"
     set +e
@@ -131,7 +155,7 @@ try_tcp() {
 
     if [[ "${VERBOSE}" -eq 1 ]]; then
         echo
-        echo "== ${label}: ${SERVER}:${port}/tcp =="
+        echo "== TCP ${SERVER}:${port} =="
         echo "timeout: ${CHECK_TIMEOUT}s"
         printf '%s\n' "${output}"
     fi
@@ -150,23 +174,50 @@ try_tcp() {
     fi
 }
 
+try_udp() {
+    local port="$1"
+    if command -v nc >/dev/null 2>&1; then
+        printf 'knockgate-check\n' | nc -u -w "${CHECK_TIMEOUT}" "${SERVER}" "${port}" >/dev/null 2>&1 || true
+        echo "UDP-SENT ${SERVER}:${port}/udp"
+        return 0
+    fi
+    if command -v bash >/dev/null 2>&1; then
+        SERVER="${SERVER}" PORT="${port}" bash -c 'printf "knockgate-check\n" >"/dev/udp/$SERVER/$PORT"' 2>/dev/null || true
+        echo "UDP-SENT ${SERVER}:${port}/udp"
+        return 0
+    fi
+    echo "FAILED ${SERVER}:${port}/udp"
+    echo "Missing nc and bash /dev/udp support." >&2
+}
+
+check_one() {
+    local raw="$1"
+    local parsed port proto
+    parsed="$(parse_target "${raw}")"
+    port="${parsed%% *}"
+    proto="${parsed##* }"
+    case "${proto}" in
+        tcp)
+            try_tcp "${port}"
+            ;;
+        udp)
+            try_udp "${port}"
+            ;;
+        both)
+            try_tcp "${port}"
+            try_udp "${port}"
+            ;;
+    esac
+}
+
 if [[ "$#" -gt 0 ]]; then
-    for port in "$@"; do
-        if ! is_port "${port}"; then
-            echo "Invalid port: ${port}" >&2
-            exit 2
-        fi
-        try_tcp "Custom port check" "${port}"
+    for target in "$@"; do
+        check_one "${target}"
     done
 else
-    if [[ "${VERBOSE}" -eq 1 ]]; then
-        echo "KnockGate connectivity check"
-        echo "This script does not send knock packets."
-        echo "Server: ${SERVER}"
-        echo "Protected port: ${PROTECTED_PORT}"
-        echo "Ordinary unlisted port: ${ORDINARY_PORT}"
-    fi
-
-    try_tcp "Ordinary unlisted port" "${ORDINARY_PORT}"
-    try_tcp "Protected port" "${PROTECTED_PORT}"
+    check_one "${ORDINARY_PORT}/tcp"
+    IFS=',' read -r -a defaults <<< "${PROTECTED_PORTS}"
+    for target in "${defaults[@]}"; do
+        check_one "${target}"
+    done
 fi

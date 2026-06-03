@@ -224,7 +224,7 @@ func Logs(follow bool) error {
 
 func Allowlist() error {
 	cfg := config.LoadOrDefault()
-	fmt.Printf("%s: %s\n", ui.T("保护端口", "Protected ports"), config.JoinPorts(cfg.ProtectedPorts))
+	fmt.Printf("%s: %s\n", ui.T("保护端口", "Protected ports"), config.JoinProtectedPorts(cfg.ProtectedPorts))
 	return nft.ShowAllowlist()
 }
 
@@ -350,12 +350,12 @@ func Menu() error {
 
 func PromptConfig(current config.Config) (config.Config, error) {
 	fmt.Println(ui.Red(ui.T("警告：Go 版 KnockGate 使用 libpcap 抓包，不监听敲门端口。", "WARNING: KnockGate Go uses libpcap capture and does not listen on knock ports.")))
-	fmt.Println(ui.Yellow(ui.T("它只管理 table inet knockgate，只 drop 你输入的保护 TCP 端口。SSH 端口规则不读取、不询问、不修改。", "It only manages table inet knockgate and only drops the protected TCP ports you enter. SSH rules are not read, prompted for, or modified.")))
+	fmt.Println(ui.Yellow(ui.T("它只管理 table inet knockgate，只 drop 你输入的保护端口和协议。SSH 端口规则不读取、不询问、不修改。", "It only manages table inet knockgate and only drops the protected ports/protocols you enter. SSH rules are not read, prompted for, or modified.")))
 	fmt.Println(ui.Yellow(ui.T("云防火墙必须允许 UDP 敲门包到达主机；主机 nftables 不需要开放敲门端口。", "Cloud firewalls must allow UDP knock packets to reach the host; host nftables does not need to open knock ports.")))
 	fmt.Println()
 
-	protected := promptPorts(ui.T("保护 TCP 端口", "Protected TCP ports"), current.ProtectedPorts, false)
-	avoid := append([]int{}, protected...)
+	protected := promptProtectedPorts(ui.T("保护端口，可写 2345、2345/tcp、2345/udp", "Protected ports, use 2345, 2345/tcp, or 2345/udp"), current.ProtectedPorts)
+	avoid := append([]int{}, config.ProtectedPortNumbers(protected)...)
 	avoid = append(avoid, detectListeningPorts()...)
 	knocks := rollKnockPorts(avoid, config.DefaultKnockCount)
 	fmt.Printf("%s: %s\n", ui.T("随机生成敲门端口", "Rolled knock ports"), config.JoinPorts(knocks))
@@ -398,7 +398,7 @@ func PrintSummary(cfg config.Config) {
 	fmt.Println()
 	fmt.Println(ui.Cyan(ui.T("配置摘要", "Configuration summary")))
 	fmt.Println(ui.T("模式：Go + libpcap UDP 顺序敲门 + 最后一步 HMAC + nftables 保护端口叠加", "Mode: Go + libpcap UDP sequence knock + final-step HMAC + nftables protective overlay"))
-	fmt.Printf("%s: %s\n", ui.T("保护 TCP 端口", "Protected TCP ports"), config.JoinPorts(cfg.ProtectedPorts))
+	fmt.Printf("%s: %s\n", ui.T("保护端口", "Protected ports"), config.JoinProtectedPorts(cfg.ProtectedPorts))
 	fmt.Printf("%s: %s\n", ui.T("UDP 敲门序列", "UDP knock sequence"), strings.ReplaceAll(config.JoinPorts(cfg.KnockPorts), ",", " -> "))
 	fmt.Printf("%s: %s\n", ui.T("开门时长", "Open timeout"), cfg.OpenTimeout)
 	fmt.Printf("%s: %ds\n", ui.T("序列超时", "Sequence timeout"), cfg.SeqTimeoutSeconds)
@@ -413,7 +413,7 @@ func ImportURL() error {
 	}
 	host := detectHost()
 	url := fmt.Sprintf("knockgate://import/v1?scheme=udp-hmac&host=%s&knock_ports=%s&protected_ports=%s&seq_timeout=%d&open_timeout=%s&hmac_window=%d&secret=%s&label=KnockGate",
-		escape(host), escape(config.JoinPorts(cfg.KnockPorts)), escape(config.JoinPorts(cfg.ProtectedPorts)), cfg.SeqTimeoutSeconds, escape(cfg.OpenTimeout), cfg.HMACWindowSeconds, escape(cfg.Secret))
+		escape(host), escape(config.JoinPorts(cfg.KnockPorts)), escape(config.JoinProtectedPorts(cfg.ProtectedPorts)), cfg.SeqTimeoutSeconds, escape(cfg.OpenTimeout), cfg.HMACWindowSeconds, escape(cfg.Secret))
 	fmt.Println(ui.Cyan(ui.T("客户端导入 URL：", "Client import URL:")))
 	fmt.Println(url)
 	if _, err := exec.LookPath("qrencode"); err == nil {
@@ -427,6 +427,17 @@ func promptPorts(label string, def []int, sequence bool) []int {
 	for {
 		text := ui.Prompt(label, config.JoinPorts(def))
 		ports, err := config.ParsePorts(text, sequence)
+		if err == nil {
+			return ports
+		}
+		fmt.Println(ui.Yellow(err.Error()))
+	}
+}
+
+func promptProtectedPorts(label string, def []config.ProtectedPort) []config.ProtectedPort {
+	for {
+		text := ui.Prompt(label, config.JoinProtectedPorts(def))
+		ports, err := config.ParseProtectedPorts(text)
 		if err == nil {
 			return ports
 		}

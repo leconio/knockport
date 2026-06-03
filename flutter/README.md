@@ -2,7 +2,7 @@
 
 Flutter GUI client for KnockGate UDP port knocking.
 
-The app imports a `knockgate://` profile, sends the UDP knock sequence in order, places the HMAC payload only on the final step, and checks protected TCP ports after the firewall allowlist opens.
+The app imports a `knockgate://` profile, sends the UDP knock sequence in order, places the HMAC payload only on the final step, and checks protected ports after the firewall allowlist opens.
 
 ## Supported platforms
 
@@ -27,7 +27,7 @@ Fields:
 - `scheme=udp-hmac` is required.
 - `host` is the server hostname or IP.
 - `knock_ports` is the ordered UDP knock sequence.
-- `protected_ports` are TCP ports to check after knocking.
+- `protected_ports` are protected ports. Use `2345` for both TCP/UDP, `2345/tcp` for TCP only, and `2345/udp` for UDP only.
 - `seq_timeout` is the server-side ordered knock timeout.
 - `open_timeout` is the nftables allowlist timeout.
 - `hmac_window` is the timestamp tolerance in seconds.
@@ -39,7 +39,7 @@ Fields:
 1. Import a profile by URL, scan a QR code, or enter the fields manually.
 2. Press `Save`.
 3. Press `Knock` to send UDP packets in the configured order.
-4. Press `Check` to test protected TCP ports.
+4. Press `Check` to test protected TCP ports. UDP-only protected ports can be saved and imported, but UDP cannot be confirmed with a reliable handshake.
 
 Check results:
 

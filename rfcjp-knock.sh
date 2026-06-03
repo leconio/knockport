@@ -19,7 +19,7 @@ Examples:
 
 Notes:
   - Earlier UDP packets only advance the server-side port sequence.
-  - Only the final UDP packet carries KG1|step|timestamp|nonce|hmac.
+  - Only the final UDP packet carries compact binary HMAC payload.
   - The final HMAC covers the destination UDP port and final sequence step.
   - Timestamp is checked by the server; keep client clock reasonably correct.
 EOF
@@ -51,7 +51,7 @@ b64url_to_hex() {
     local input="$1"
     local b64
     b64="${input//-/+}"
-    b64="${b64//_/\/}"
+    b64="${b64//_//}"
     case $(( ${#b64} % 4 )) in
         2) b64="${b64}==" ;;
         3) b64="${b64}=" ;;
@@ -65,28 +65,59 @@ b64url_mac() {
     local message="$2"
     printf '%s' "${message}" |
         openssl dgst -sha256 -mac HMAC -macopt "hexkey:${secret_hex}" -binary |
+        head -c 16 |
         openssl enc -A -base64 |
         tr '+/' '-_' |
         tr -d '='
 }
 
-nonce() {
-    openssl rand -base64 18 | tr '+/' '-_' | tr -d '=\n'
+hex_hmac8() {
+    local secret_hex="$1"
+    local message_hex="$2"
+    printf '%s' "${message_hex}" |
+        xxd -r -p |
+        openssl dgst -sha256 -mac HMAC -macopt "hexkey:${secret_hex}" -binary |
+        head -c 8 |
+        od -An -tx1 |
+        tr -d ' \n'
 }
 
-send_udp() {
+nonce() {
+    openssl rand -base64 12 | tr '+/' '-_' | tr -d '=\n'
+}
+
+send_udp_text() {
     local server="$1"
     local port="$2"
     local payload="$3"
 
-    if ! printf '%s\n' "${payload}" >"/dev/udp/${server}/${port}" 2>/dev/null; then
-        if command -v nc >/dev/null 2>&1; then
-            printf '%s\n' "${payload}" | nc -u -w1 "${server}" "${port}" >/dev/null 2>&1 || true
-        else
-            echo "Failed to send UDP packet and nc fallback is unavailable." >&2
-            return 1
-        fi
+    if command -v bash >/dev/null 2>&1; then
+        PAYLOAD="${payload}" SERVER="${server}" PORT="${port}" bash -c 'printf "%s\n" "$PAYLOAD" >"/dev/udp/$SERVER/$PORT"' 2>/dev/null && return 0
     fi
+
+    if command -v nc >/dev/null 2>&1; then
+        printf '%s\n' "${payload}" | nc -u -w1 "${server}" "${port}" >/dev/null 2>&1 || true
+        return 0
+    fi
+
+    echo "Failed to send UDP packet: bash /dev/udp and nc are unavailable." >&2
+    return 1
+}
+
+send_udp_hex() {
+    local server="$1"
+    local port="$2"
+    local payload_hex="$3"
+
+    if ! command -v nc >/dev/null 2>&1; then
+        echo "Missing nc for binary UDP payload." >&2
+        return 1
+    fi
+    if ! command -v xxd >/dev/null 2>&1; then
+        echo "Missing xxd for binary UDP payload." >&2
+        return 1
+    fi
+    printf '%s' "${payload_hex}" | xxd -r -p | nc -u -w1 "${server}" "${port}" >/dev/null 2>&1 || true
 }
 
 is_port() {
@@ -152,6 +183,10 @@ if ! command -v openssl >/dev/null 2>&1; then
     echo "Missing openssl." >&2
     exit 2
 fi
+if ! command -v xxd >/dev/null 2>&1; then
+    echo "Missing xxd." >&2
+    exit 2
+fi
 if ! [[ "${KNOCK_DELAY}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
     echo "Invalid delay: ${KNOCK_DELAY}" >&2
     exit 2
@@ -172,15 +207,22 @@ last_step=$((${#PORTS[@]} - 1))
 for port in "${PORTS[@]}"; do
     if (( step == last_step )); then
         ts="$(date +%s)"
-        nonce_value="$(nonce)"
-        message="KG1|${port}|${step}|${ts}|${nonce_value}"
-        mac="$(b64url_mac "${SECRET_HEX}" "${message}")"
-        payload="KG1|${step}|${ts}|${nonce_value}|${mac}"
+        port_hex="$(printf '%04x' "${port}")"
+        step_hex="$(printf '%02x' "${step}")"
+        ts_hex="$(printf '%08x' "${ts}")"
+        nonce_hex="$(openssl rand -hex 4)"
+        message_hex="4b31${port_hex}${step_hex}${ts_hex}${nonce_hex}"
+        mac_hex="$(hex_hmac8 "${SECRET_HEX}" "${message_hex}")"
+        payload_hex="4b31${step_hex}${ts_hex}${nonce_hex}${mac_hex}"
     else
         payload="KG0|${step}"
     fi
     echo "  -> step ${step} ${port}/udp"
-    send_udp "${SERVER}" "${port}" "${payload}"
+    if (( step == last_step )); then
+        send_udp_hex "${SERVER}" "${port}" "${payload_hex}"
+    else
+        send_udp_text "${SERVER}" "${port}" "${payload}"
+    fi
     step=$((step + 1))
     sleep "${KNOCK_DELAY}"
 done

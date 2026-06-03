@@ -32,7 +32,7 @@ const (
 
 // Config 是服务端唯一配置来源。Go 版不再保存 SSH 端口，因为 KnockGate 不接管 SSH。
 type Config struct {
-	ProtectedPorts    []int
+	ProtectedPorts    []ProtectedPort
 	KnockPorts        []int
 	OpenTimeout       string
 	SeqTimeoutSeconds int
@@ -42,13 +42,26 @@ type Config struct {
 	Mode              string
 }
 
+type Proto string
+
+const (
+	ProtoBoth Proto = "both"
+	ProtoTCP  Proto = "tcp"
+	ProtoUDP  Proto = "udp"
+)
+
+type ProtectedPort struct {
+	Port  int
+	Proto Proto
+}
+
 // Load 读取 /etc/knockgate/knockgate.conf，并兼容旧 shell 版的 KEY=VALUE 格式。
 func Load() (Config, error) {
 	values, err := ParseFile(File)
 	if err != nil {
 		return Config{}, err
 	}
-	protected, err := ParsePorts(first(values["PROTECTED_PORTS"], values["PROTECTED_PORT"], DefaultProtectedPorts), false)
+	protected, err := ParseProtectedPorts(first(values["PROTECTED_PORTS"], values["PROTECTED_PORT"], DefaultProtectedPorts))
 	if err != nil {
 		return Config{}, err
 	}
@@ -86,7 +99,7 @@ func LoadOrDefault() Config {
 	}
 	secret, _ := GenerateSecret()
 	return Config{
-		ProtectedPorts:    []int{5432},
+		ProtectedPorts:    []ProtectedPort{{Port: 5432, Proto: ProtoBoth}},
 		OpenTimeout:       DefaultOpenTimeout,
 		SeqTimeoutSeconds: DefaultSeqTimeout,
 		HMACWindowSeconds: DefaultHMACWindow,
@@ -108,7 +121,7 @@ HMAC_WINDOW=%d
 SECRET="%s"
 INTERFACE="%s"
 MODE="%s"
-`, JoinPorts(cfg.ProtectedPorts), JoinPorts(cfg.KnockPorts), cfg.OpenTimeout, cfg.SeqTimeoutSeconds, cfg.HMACWindowSeconds, cfg.Secret, cfg.Interface, DefaultMode)
+`, JoinProtectedPorts(cfg.ProtectedPorts), JoinPorts(cfg.KnockPorts), cfg.OpenTimeout, cfg.SeqTimeoutSeconds, cfg.HMACWindowSeconds, cfg.Secret, cfg.Interface, DefaultMode)
 	return os.WriteFile(File, []byte(data), 0600)
 }
 
@@ -162,12 +175,107 @@ func ParsePorts(text string, sequence bool) ([]int, error) {
 	return ports, nil
 }
 
+func ParseProtectedPorts(text string) ([]ProtectedPort, error) {
+	if strings.TrimSpace(text) == "" {
+		return nil, errors.New("保护端口列表为空")
+	}
+	seen := map[string]bool{}
+	var ports []ProtectedPort
+	for _, part := range regexp.MustCompile(`[,\s]+`).Split(strings.TrimSpace(text), -1) {
+		if part == "" {
+			continue
+		}
+		portPart := part
+		proto := ProtoBoth
+		if strings.Contains(part, "/") {
+			left, right, ok := strings.Cut(part, "/")
+			if !ok || left == "" || right == "" {
+				return nil, fmt.Errorf("无效保护端口：%s", part)
+			}
+			portPart = left
+			switch strings.ToLower(right) {
+			case "tcp":
+				proto = ProtoTCP
+			case "udp":
+				proto = ProtoUDP
+			default:
+				return nil, fmt.Errorf("无效协议：%s，只支持 tcp/udp", right)
+			}
+		}
+		port, err := strconv.Atoi(portPart)
+		if err != nil || !ValidPort(port) {
+			return nil, fmt.Errorf("无效端口：%s", portPart)
+		}
+		key := fmt.Sprintf("%d/%s", port, proto)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		ports = append(ports, ProtectedPort{Port: port, Proto: proto})
+	}
+	if len(ports) == 0 {
+		return nil, errors.New("保护端口列表为空")
+	}
+	return ports, nil
+}
+
 func JoinPorts(ports []int) string {
 	parts := make([]string, len(ports))
 	for i, port := range ports {
 		parts[i] = strconv.Itoa(port)
 	}
 	return strings.Join(parts, ",")
+}
+
+func JoinProtectedPorts(ports []ProtectedPort) string {
+	parts := make([]string, len(ports))
+	for i, item := range ports {
+		switch item.Proto {
+		case ProtoTCP:
+			parts[i] = fmt.Sprintf("%d/tcp", item.Port)
+		case ProtoUDP:
+			parts[i] = fmt.Sprintf("%d/udp", item.Port)
+		default:
+			parts[i] = strconv.Itoa(item.Port)
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
+func ProtectedTCPPorts(ports []ProtectedPort) []int {
+	return protectedPortsFor(ports, ProtoTCP)
+}
+
+func ProtectedUDPPorts(ports []ProtectedPort) []int {
+	return protectedPortsFor(ports, ProtoUDP)
+}
+
+func ProtectedPortNumbers(ports []ProtectedPort) []int {
+	seen := map[int]bool{}
+	var out []int
+	for _, item := range ports {
+		if !seen[item.Port] {
+			seen[item.Port] = true
+			out = append(out, item.Port)
+		}
+	}
+	sort.Ints(out)
+	return out
+}
+
+func protectedPortsFor(ports []ProtectedPort, proto Proto) []int {
+	seen := map[int]bool{}
+	var out []int
+	for _, item := range ports {
+		if item.Proto == ProtoBoth || item.Proto == proto {
+			if !seen[item.Port] {
+				seen[item.Port] = true
+				out = append(out, item.Port)
+			}
+		}
+	}
+	sort.Ints(out)
+	return out
 }
 
 func ValidPort(port int) bool {

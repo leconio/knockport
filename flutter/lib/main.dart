@@ -43,6 +43,7 @@ class KnockProfile {
     required this.host,
     required this.knockPorts,
     required this.protectedPorts,
+    required this.protectedPortsText,
     required this.seqTimeoutSeconds,
     required this.hmacWindowSeconds,
     required this.openTimeout,
@@ -53,6 +54,7 @@ class KnockProfile {
   final String host;
   final List<int> knockPorts;
   final List<int> protectedPorts;
+  final String protectedPortsText;
   final int seqTimeoutSeconds;
   final int hmacWindowSeconds;
   final String openTimeout;
@@ -64,6 +66,7 @@ class KnockProfile {
       host: '',
       knockPorts: <int>[],
       protectedPorts: <int>[5432],
+      protectedPortsText: '5432',
       seqTimeoutSeconds: 10,
       hmacWindowSeconds: 60,
       openTimeout: '12h',
@@ -79,6 +82,7 @@ class KnockProfile {
       host: (json['host'] as String? ?? '').trim(),
       knockPorts: _parsePortList(json['knockPorts']),
       protectedPorts: _parsePortList(json['protectedPorts']),
+      protectedPortsText: _protectedTextFromJson(json),
       seqTimeoutSeconds: json['seqTimeoutSeconds'] is int
           ? json['seqTimeoutSeconds'] as int
           : int.tryParse('${json['seqTimeoutSeconds'] ?? 10}') ?? 10,
@@ -107,12 +111,11 @@ class KnockProfile {
       throw const FormatException('Missing host.');
     }
     final knockPorts = parsePorts(params['knock_ports'] ?? '');
-    final protectedPorts = parsePorts(params['protected_ports'] ?? '');
+    final protectedPortsRaw = params['protected_ports'] ?? '';
+    validateProtectedPorts(protectedPortsRaw);
+    final protectedPorts = parseProtectedTcpPorts(protectedPortsRaw);
     if (knockPorts.isEmpty) {
       throw const FormatException('Missing UDP knock ports.');
-    }
-    if (protectedPorts.isEmpty) {
-      throw const FormatException('Missing protected ports.');
     }
     final secret = (params['secret'] ?? '').trim();
     if (secret.isEmpty) {
@@ -124,6 +127,7 @@ class KnockProfile {
       host: host,
       knockPorts: knockPorts,
       protectedPorts: protectedPorts,
+      protectedPortsText: protectedPortsRaw,
       seqTimeoutSeconds: int.tryParse(params['seq_timeout'] ?? '') ?? 10,
       hmacWindowSeconds: int.tryParse(params['hmac_window'] ?? '') ?? 60,
       openTimeout: (params['open_timeout'] ?? '12h').trim(),
@@ -137,6 +141,7 @@ class KnockProfile {
       'host': host,
       'knockPorts': knockPorts,
       'protectedPorts': protectedPorts,
+      'protectedPortsText': protectedPortsText,
       'seqTimeoutSeconds': seqTimeoutSeconds,
       'hmacWindowSeconds': hmacWindowSeconds,
       'openTimeout': openTimeout,
@@ -149,6 +154,7 @@ class KnockProfile {
     String? host,
     List<int>? knockPorts,
     List<int>? protectedPorts,
+    String? protectedPortsText,
     int? seqTimeoutSeconds,
     int? hmacWindowSeconds,
     String? openTimeout,
@@ -159,6 +165,7 @@ class KnockProfile {
       host: host ?? this.host,
       knockPorts: knockPorts ?? this.knockPorts,
       protectedPorts: protectedPorts ?? this.protectedPorts,
+      protectedPortsText: protectedPortsText ?? this.protectedPortsText,
       seqTimeoutSeconds: seqTimeoutSeconds ?? this.seqTimeoutSeconds,
       hmacWindowSeconds: hmacWindowSeconds ?? this.hmacWindowSeconds,
       openTimeout: openTimeout ?? this.openTimeout,
@@ -167,7 +174,7 @@ class KnockProfile {
   }
 
   String get knockPortText => knockPorts.join(',');
-  String get protectedPortText => protectedPorts.join(',');
+  String get protectedPortText => protectedPortsText;
 
   static List<int> _parsePortList(Object? value) {
     if (value is List) {
@@ -178,6 +185,14 @@ class KnockProfile {
           .toList();
     }
     return parsePorts('$value');
+  }
+
+  static String _protectedTextFromJson(Map<String, Object?> json) {
+    final text = (json['protectedPortsText'] as String? ?? '').trim();
+    if (text.isNotEmpty) {
+      return text;
+    }
+    return _parsePortList(json['protectedPorts']).join(',');
   }
 }
 
@@ -286,7 +301,9 @@ class _HomePageState extends State<HomePage> {
   KnockProfile _readForm() {
     final host = _hostController.text.trim();
     final knockPorts = parsePorts(_knockPortsController.text);
-    final protectedPorts = parsePorts(_protectedPortsController.text);
+    final protectedPortsRaw = _protectedPortsController.text.trim();
+    validateProtectedPorts(protectedPortsRaw);
+    final protectedPorts = parseProtectedTcpPorts(protectedPortsRaw);
     final seqTimeout = int.tryParse(_seqTimeoutController.text.trim()) ?? 10;
     final hmacWindow = int.tryParse(_hmacWindowController.text.trim()) ?? 60;
     final secret = _secretController.text.trim();
@@ -296,11 +313,6 @@ class _HomePageState extends State<HomePage> {
     }
     if (knockPorts.isEmpty) {
       throw const FormatException('At least one UDP knock port is required.');
-    }
-    if (protectedPorts.isEmpty) {
-      throw const FormatException(
-        'At least one protected TCP port is required.',
-      );
     }
     if (seqTimeout < 1) {
       throw const FormatException('Sequence timeout must be positive.');
@@ -319,6 +331,7 @@ class _HomePageState extends State<HomePage> {
       host: host,
       knockPorts: knockPorts,
       protectedPorts: protectedPorts,
+      protectedPortsText: protectedPortsRaw,
       seqTimeoutSeconds: seqTimeout,
       hmacWindowSeconds: hmacWindow,
       openTimeout: _openTimeoutController.text.trim().isEmpty
@@ -401,6 +414,11 @@ class _HomePageState extends State<HomePage> {
       final profile = _readForm();
       _setProfile(profile);
       await _saveProfile();
+      if (profile.protectedPorts.isEmpty) {
+        _append('No TCP protected ports to check.');
+        _setStatus('Connectivity check skipped');
+        return;
+      }
       for (final port in profile.protectedPorts) {
         final result = await checkTcp(profile.host, port);
         _append('${profile.host}:$port/tcp $result');
@@ -712,20 +730,36 @@ Future<InternetAddress> _resolveHost(String host) async {
 
 List<int> buildKnockPayload(String secret, int port, int step) {
   final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-  final nonce = randomNonce();
-  final message = 'KG1|$port|$step|$now|$nonce';
-  final mac = Hmac(
-    sha256,
-    decodeBase64Url(secret),
-  ).convert(utf8.encode(message));
-  final encodedMac = base64UrlNoPadding(mac.bytes);
-  return utf8.encode('KG1|$step|$now|$nonce|$encodedMac');
+  final nonce = randomBytes(4);
+  final message = <int>[
+    0x4b,
+    0x31,
+    (port >> 8) & 0xff,
+    port & 0xff,
+    step & 0xff,
+    (now >> 24) & 0xff,
+    (now >> 16) & 0xff,
+    (now >> 8) & 0xff,
+    now & 0xff,
+    ...nonce,
+  ];
+  final mac = Hmac(sha256, decodeBase64Url(secret)).convert(message);
+  return <int>[
+    0x4b,
+    0x31,
+    step & 0xff,
+    (now >> 24) & 0xff,
+    (now >> 16) & 0xff,
+    (now >> 8) & 0xff,
+    now & 0xff,
+    ...nonce,
+    ...mac.bytes.take(8),
+  ];
 }
 
-String randomNonce() {
+List<int> randomBytes(int length) {
   final random = Random.secure();
-  final bytes = List<int>.generate(18, (_) => random.nextInt(256));
-  return base64UrlNoPadding(bytes);
+  return List<int>.generate(length, (_) => random.nextInt(256));
 }
 
 List<int> decodeBase64Url(String value) {
@@ -760,6 +794,64 @@ List<int> parsePorts(String text) {
     }
   }
   return ports;
+}
+
+List<int> parseProtectedTcpPorts(String text) {
+  final seen = <int>{};
+  final ports = <int>[];
+  for (final rawPart in text.split(RegExp(r'[\s,]+'))) {
+    final part = rawPart.trim();
+    if (part.isEmpty) {
+      continue;
+    }
+    final pieces = part.split('/');
+    if (pieces.length > 2) {
+      throw FormatException('Invalid protected port: $part');
+    }
+    final port = int.tryParse(pieces.first);
+    if (port == null || !isValidPort(port)) {
+      throw FormatException('Invalid port: $part');
+    }
+    final proto = pieces.length == 2 ? pieces[1].toLowerCase() : 'both';
+    if (proto != 'tcp' && proto != 'udp') {
+      throw FormatException('Invalid protocol: $part');
+    }
+    if (proto == 'udp') {
+      continue;
+    }
+    if (seen.add(port)) {
+      ports.add(port);
+    }
+  }
+  return ports;
+}
+
+void validateProtectedPorts(String text) {
+  var count = 0;
+  for (final rawPart in text.split(RegExp(r'[\s,]+'))) {
+    final part = rawPart.trim();
+    if (part.isEmpty) {
+      continue;
+    }
+    count++;
+    final pieces = part.split('/');
+    if (pieces.length > 2) {
+      throw FormatException('Invalid protected port: $part');
+    }
+    final port = int.tryParse(pieces.first);
+    if (port == null || !isValidPort(port)) {
+      throw FormatException('Invalid port: $part');
+    }
+    if (pieces.length == 2) {
+      final proto = pieces[1].toLowerCase();
+      if (proto != 'tcp' && proto != 'udp') {
+        throw FormatException('Invalid protocol: $part');
+      }
+    }
+  }
+  if (count == 0) {
+    throw const FormatException('At least one protected port is required.');
+  }
 }
 
 bool isValidPort(int port) => port >= 1 && port <= 65535;

@@ -22,7 +22,9 @@ func WriteConfig(cfg config.Config) error {
 	if err := os.MkdirAll(config.Dir, 0700); err != nil {
 		return err
 	}
-	protected := portExpr(cfg.ProtectedPorts)
+	tcpPorts := config.ProtectedTCPPorts(cfg.ProtectedPorts)
+	udpPorts := config.ProtectedUDPPorts(cfg.ProtectedPorts)
+	rules := protectedRules(tcpPorts, udpPorts)
 	data := fmt.Sprintf(`#!/usr/sbin/nft -f
 
 # 由 KnockGate Go 管理。只定义 table inet knockgate，不修改系统原防火墙。
@@ -36,14 +38,10 @@ table %s %s {
     chain input {
         type filter hook input priority -150; policy accept;
 
-        # 已通过 HMAC 敲门的来源 IP 可以访问保护端口。
-        ip saddr @%s tcp dport %s accept
-
-        # 未通过敲门的来源只丢弃保护端口；其他端口交给原防火墙继续处理。
-        tcp dport %s drop
+%s
     }
 }
-`, Family, Table, Set, Set, protected, protected)
+`, Family, Table, Set, rules)
 	return os.WriteFile(config.NFTFile, []byte(data), 0600)
 }
 
@@ -99,6 +97,27 @@ func Stream(name string, args ...string) (string, error) {
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 	return "", cmd.Run()
+}
+
+func protectedRules(tcpPorts, udpPorts []int) string {
+	var lines []string
+	if len(tcpPorts) > 0 {
+		expr := portExpr(tcpPorts)
+		lines = append(lines,
+			"        # TCP 保护端口：已通过敲门来源放行，其他来源丢弃。",
+			fmt.Sprintf("        ip saddr @%s tcp dport %s accept", Set, expr),
+			fmt.Sprintf("        tcp dport %s drop", expr),
+		)
+	}
+	if len(udpPorts) > 0 {
+		expr := portExpr(udpPorts)
+		lines = append(lines,
+			"        # UDP 保护端口：已通过敲门来源放行，其他来源丢弃。",
+			fmt.Sprintf("        ip saddr @%s udp dport %s accept", Set, expr),
+			fmt.Sprintf("        udp dport %s drop", expr),
+		)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func portExpr(ports []int) string {

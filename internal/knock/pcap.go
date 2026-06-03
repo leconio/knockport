@@ -2,6 +2,7 @@ package knock
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -37,7 +38,7 @@ func ServePCAP(ctx context.Context, cfg config.Config) error {
 		return err
 	}
 
-	handle, err := pcap.OpenLive(cfg.Interface, 65535, true, pcap.BlockForever)
+	handle, err := pcap.OpenLive(cfg.Interface, 65535, true, time.Second)
 	if err != nil {
 		return fmt.Errorf("打开 pcap 网卡 %s 失败：%w", cfg.Interface, err)
 	}
@@ -47,20 +48,31 @@ func ServePCAP(ctx context.Context, cfg config.Config) error {
 	if err := handle.SetBPFFilter(filter); err != nil {
 		return fmt.Errorf("设置 BPF 过滤器失败：%w", err)
 	}
-	log.Printf("pcap 抓包已启动：interface=%s filter=%q protected=%s", cfg.Interface, filter, config.JoinPorts(cfg.ProtectedPorts))
+	log.Printf("pcap 抓包已启动：interface=%s filter=%q protected=%s", cfg.Interface, filter, config.JoinProtectedPorts(cfg.ProtectedPorts))
+
+	go func() {
+		<-ctx.Done()
+		handle.Close()
+	}()
 
 	source := gopacket.NewPacketSource(handle, handle.LinkType())
 	state := NewState()
 	for {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return nil
-		case packet, ok := <-source.Packets():
-			if !ok {
+		}
+		packet, err := source.NextPacket()
+		if err != nil {
+			if ctx.Err() != nil || errors.Is(err, pcap.NextErrorTimeoutExpired) {
+				continue
+			}
+			if strings.Contains(err.Error(), "handle is closed") {
 				return nil
 			}
-			processPacket(cfg, secret, state, packet)
+			log.Printf("读取 pcap 包失败：%v", err)
+			continue
 		}
+		processPacket(cfg, secret, state, packet)
 	}
 }
 

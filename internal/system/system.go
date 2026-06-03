@@ -80,9 +80,9 @@ func libpcapPackages() []string {
 	}
 	switch family {
 	case "apt":
-		return []string{"libpcap-dev"}
+		return []string{"libpcap0.8"}
 	case "dnf":
-		return []string{"libpcap-devel"}
+		return []string{"libpcap"}
 	case "pacman":
 		return []string{"libpcap"}
 	default:
@@ -156,6 +156,7 @@ Type=simple
 ExecStart=%s serve
 Restart=always
 RestartSec=2s
+TimeoutStopSec=5s
 AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
 CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
 NoNewPrivileges=true
