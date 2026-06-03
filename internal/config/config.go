@@ -15,11 +15,12 @@ import (
 )
 
 const (
-	Dir         = "/etc/knockgate"
-	File        = "/etc/knockgate/knockgate.conf"
-	NFTFile     = "/etc/knockgate/knockgate.nft"
-	ReadmeFile  = "/etc/knockgate/README"
-	DefaultMode = "go_hmac_pcap_overlay"
+	Dir          = "/etc/knockgate"
+	File         = "/etc/knockgate/knockgate.conf"
+	NFTFile      = "/etc/knockgate/knockgate.nft"
+	NFTApplyFile = "/etc/knockgate/knockgate.apply.nft"
+	ReadmeFile   = "/etc/knockgate/README"
+	DefaultMode  = "go_hmac_pcap_overlay"
 )
 
 const (

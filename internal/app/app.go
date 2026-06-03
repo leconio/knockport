@@ -141,9 +141,6 @@ func Install() error {
 	if err := config.Save(cfg); err != nil {
 		return err
 	}
-	if err := nft.Apply(cfg); err != nil {
-		return err
-	}
 	if err := system.InstallSelf(); err != nil {
 		return err
 	}
@@ -174,7 +171,7 @@ func Update() error {
 	if err != nil {
 		return err
 	}
-	if err := nft.Apply(cfg); err != nil {
+	if err := nft.WriteConfig(cfg); err != nil {
 		return err
 	}
 	if err := system.WriteService(); err != nil {
