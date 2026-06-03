@@ -14,6 +14,7 @@ It uses UDP port sequences captured with `libpcap`, validates the final packet w
 - Protected TCP and UDP ports
 - Does not rewrite `/etc/nftables.conf`
 - Does not flush existing firewall rules
+- Works when the protected ports are blocked by the host firewall
 - systemd service management
 - Terminal QR code for client profile import
 - Linux `amd64` and `arm64` release packages
@@ -197,7 +198,9 @@ ip saddr @knock_allow_temp_v4 udp dport 2345 accept
 udp dport 2345 drop
 ```
 
-Knock ports are not accepted by nftables. The service reads UDP packets from the interface through pcap.
+Knock ports are not accepted by nftables. The service reads UDP packets from the interface through pcap, so KnockGate can still see knock packets even when the host firewall drops the target ports.
+
+Upstream firewalls are different. Cloud security groups, provider firewalls, or routers must allow the UDP knock packets to reach the server.
 
 ## Client Usage
 

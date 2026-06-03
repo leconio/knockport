@@ -14,6 +14,7 @@ KnockGate 使用 `libpcap` 抓包，不监听敲门端口；使用 HMAC 校验�
 - 支持保护 TCP 和 UDP 端口
 - 不重写 `/etc/nftables.conf`
 - 不清空系统原防火墙规则
+- 保护端口被主机防火墙拦截时，仍可通过敲门放行
 - systemd 服务管理
 - 终端二维码导入客户端配置
 - 提供 Linux `amd64` / `arm64` 预编译产物
@@ -195,7 +196,9 @@ ip saddr @knock_allow_temp_v4 udp dport 2345 accept
 udp dport 2345 drop
 ```
 
-敲门端口不会在 nftables 中放行。服务端通过 pcap 从网卡读取 UDP 包。
+敲门端口不会在 nftables 中放行。服务端通过 pcap 从网卡读取 UDP 包，因此即使主机防火墙正在 drop 保护端口，KnockGate 仍然可以看到敲门包并完成放行。
+
+上游防火墙不一样。云厂商安全组、机房防火墙或路由器必须允许 UDP 敲门包到达服务器。
 
 ## 客户端用法
 
