@@ -609,9 +609,30 @@ detect_nft_accept_ports() {
 
     command -v nft >/dev/null 2>&1 || return 0
 
-    nft list ruleset 2>/dev/null | awk -v proto="${proto}" '
+    nft list ruleset 2>/dev/null | awk \
+        -v proto="${proto}" \
+        -v kg_family="${NFT_TABLE_FAMILY}" \
+        -v kg_table="${NFT_TABLE_NAME}" '
+        function brace_delta(s,    opens, closes) {
+            opens = gsub(/{/, "{", s)
+            closes = gsub(/}/, "}", s)
+            return opens - closes
+        }
         {
             line = $0
+            if (line ~ "^[ \t]*table[ \t]+" kg_family "[ \t]+" kg_table "[ \t]*[{]") {
+                in_knockgate = 1
+                depth = brace_delta(line)
+                next
+            }
+            if (in_knockgate) {
+                depth += brace_delta(line)
+                if (depth <= 0) {
+                    in_knockgate = 0
+                    depth = 0
+                }
+                next
+            }
             if (line ~ /ip saddr @knock_allow_temp_v4/) next
             marker = proto " dport"
             pos = index(line, marker)
@@ -710,6 +731,7 @@ print_autodetect_summary() {
     echo "  - $(tr_text "当前 nftables/UFW 的 accept 规则（如果可读取）" "current nftables/UFW accept rules when readable")"
     echo
     warn "$(tr_text "不会因为某个端口正在监听就自动开放。只有当前防火墙已经放行的端口，加上 SSH 端口，会保持常开。" "Listening sockets are not opened automatically. Only ports already accepted by the current firewall, plus the SSH port, are kept open.")"
+    warn "$(tr_text "自动识别会忽略 KnockGate 自己的旧规则，避免重装/重置时继承已经废弃的常开端口。" "Auto-detection ignores old KnockGate rules so reinstall/reset does not inherit obsolete always-open ports.")"
 }
 
 print_rolled_knock_summary() {

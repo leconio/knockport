@@ -31,6 +31,8 @@ Examples:
   $(basename "$0") --verbose SERVER_IP 5432
   SSH_PORT=2222 PROTECTED_PORT=5432 $(basename "$0") example.com
 
+Set KNOCKGATE_CHECK_NO_NET_WARN=1 to suppress local proxy/TUN warnings.
+
 Results:
   OPEN      TCP handshake succeeded. A service is reachable.
   REFUSED   Firewall likely allowed the path, but no service is listening.
@@ -73,6 +75,24 @@ fi
 SERVER="$1"
 shift
 
+warn_local_network_context() {
+    [[ "${KNOCKGATE_CHECK_NO_NET_WARN:-0}" == "1" ]] && return 0
+    [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]] || return 0
+
+    local route_info iface proxy_info
+    route_info="$(route -n get "${SERVER}" 2>/dev/null || true)"
+    iface="$(printf '%s\n' "${route_info}" | awk '/interface:/ {print $2; exit}')"
+
+    if [[ "${iface}" == utun* ]]; then
+        echo "WARN route=${iface}; VPN/TUN/proxy may make closed ports look OPEN." >&2
+    fi
+
+    proxy_info="$(scutil --proxy 2>/dev/null || true)"
+    if printf '%s\n' "${proxy_info}" | grep -Eq 'HTTPEnable[[:space:]]*:[[:space:]]*1|HTTPSEnable[[:space:]]*:[[:space:]]*1|SOCKSEnable[[:space:]]*:[[:space:]]*1'; then
+        echo "WARN system proxy is enabled; test from a clean route if results look wrong." >&2
+    fi
+}
+
 is_port() {
     [[ "$1" =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 ))
 }
@@ -106,6 +126,8 @@ try_tcp() {
         fi
     fi
 }
+
+warn_local_network_context
 
 if [[ "$#" -gt 0 ]]; then
     for port in "$@"; do
