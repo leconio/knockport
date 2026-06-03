@@ -87,6 +87,7 @@ UDP 敲门端口不在 `nftables` 中开放；`knockd` 通过抓包观察 UDP �
 - `knockgate.sh`：服务端安装和管理脚本
 - `rfcjp-knock.sh`：客户端 UDP 敲门脚本
 - `rfcjp-check.sh`：客户端 TCP 连通性检查脚本
+- `flutter/`：Flutter 图形客户端，支持 Android、iOS、macOS、Windows、Linux
 
 安装后的服务端路径：
 
@@ -182,6 +183,28 @@ knockgate://import/v1?host=SERVER_IP&scheme=udp&knock_ports=38127%2C19452%2C4721
 ```
 
 二维码包含 UDP 敲门顺序，请把它当作敏感信息，只分享给可信客户端。
+
+## Flutter 客户端
+
+[`flutter/`](flutter/) 目录内是图形客户端，可以：
+
+- 导入 `knockgate://` URL；
+- 在 Android、iOS、macOS 上扫描导入二维码；
+- 手动修改服务器地址、UDP 敲门端口、保护 TCP 端口和时间参数；
+- 一键发送 UDP 敲门顺序；
+- 检测保护 TCP 端口连通性。
+
+开发命令：
+
+```bash
+cd flutter
+flutter pub get
+flutter analyze
+flutter test
+flutter run -d macos
+```
+
+Windows 和 Linux 图形客户端支持手动配置和粘贴导入 URL。扫码能力目前受插件限制，只在 Android、iOS、macOS 启用。
 
 ## 卸载
 

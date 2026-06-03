@@ -87,6 +87,7 @@ Repository files:
 - `knockgate.sh` - server-side installer and manager
 - `rfcjp-knock.sh` - client-side UDP knock helper
 - `rfcjp-check.sh` - client-side TCP connectivity checker
+- `flutter/` - Flutter GUI client for Android, iOS, macOS, Windows, and Linux
 
 Installed server paths:
 
@@ -182,6 +183,28 @@ knockgate://import/v1?host=SERVER_IP&scheme=udp&knock_ports=38127%2C19452%2C4721
 ```
 
 The QR code contains the UDP knock sequence. Treat it like a secret and share it only with trusted clients.
+
+## Flutter Client
+
+The Flutter client in [`flutter/`](flutter/) can:
+
+- import `knockgate://` URLs;
+- scan import QR codes on Android, iOS, and macOS;
+- edit host, UDP knock ports, protected TCP ports, and timing fields;
+- send the UDP knock sequence with one button;
+- check protected TCP port reachability.
+
+Development:
+
+```bash
+cd flutter
+flutter pub get
+flutter analyze
+flutter test
+flutter run -d macos
+```
+
+Windows and Linux GUI builds support manual profile entry and pasted import URLs. QR scanning is currently limited to Android, iOS, and macOS by the scanner plugin.
 
 ## Uninstall
 
