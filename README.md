@@ -52,14 +52,52 @@ Supported package families:
 - RHEL family: Rocky Linux, AlmaLinux, CentOS Stream, Fedora
 - Arch Linux
 
-The installer downloads a prebuilt release package. It does not build Go on the target server.
+## Quick Start
 
-## Installation
+Install on the server:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh | sudo bash
 sudo knockgate install
 ```
+
+During setup, enter:
+
+```text
+Protected ports: for example 5432,9092/tcp,51820/udp
+Knock ports: use the generated UDP ports, or enter your own
+Open timeout: default 12h
+Interface: auto-detected by default
+```
+
+Print the client import URL / QR code:
+
+```bash
+sudo knockgate qr
+```
+
+Download the shell client on a client machine:
+
+```bash
+curl -fLO https://github.com/leconio/knockport/releases/latest/download/knockgate-knock.sh
+curl -fLO https://github.com/leconio/knockport/releases/latest/download/knockgate-check.sh
+chmod +x knockgate-knock.sh knockgate-check.sh
+```
+
+Open protected ports from the client:
+
+```bash
+./knockgate-knock.sh --url 'knockgate://import/v1?...'
+```
+
+Check a protected port:
+
+```bash
+./knockgate-check.sh SERVER_IP 5432
+./knockgate-check.sh SERVER_IP 5432/tcp 5432/udp
+```
+
+## Downloads
 
 Release assets:
 
@@ -93,19 +131,29 @@ sudo knockgate
 Common commands:
 
 ```bash
-sudo knockgate install
-sudo knockgate reset
-sudo knockgate update
-sudo knockgate status
-sudo knockgate logs
-sudo knockgate allow 203.0.113.10
-sudo knockgate flush
-sudo knockgate clear
-sudo knockgate qr
-sudo knockgate uninstall
+sudo knockgate install       # install or repair
+sudo knockgate reset         # reset protected ports, knock ports, secret, and timings
+sudo knockgate update        # apply the currently saved settings
+sudo knockgate status        # show service, rules, allowlist, and config
+sudo knockgate logs          # show recent logs
+sudo knockgate logs-follow   # follow logs
+sudo knockgate qr            # print client import URL / QR code
+sudo knockgate allow IP      # manually allow one IPv4 temporarily
+sudo knockgate flush         # flush temporary allowlist
+sudo knockgate reload        # rebuild KnockGate's own nft table; flushes temporary allowlist
+sudo knockgate clear         # delete table inet knockgate
+sudo knockgate uninstall     # uninstall
 ```
 
-## Configuration
+## Configuration Management
+
+Use the interactive menu to change settings:
+
+```bash
+sudo knockgate reset
+```
+
+The configuration file is managed by KnockGate and normally does not need manual editing. The path and example below are mainly for troubleshooting or backup records.
 
 Configuration file:
 
@@ -113,7 +161,7 @@ Configuration file:
 /etc/knockgate/knockgate.conf
 ```
 
-Example:
+Example content:
 
 ```bash
 PROTECTED_PORTS="5432,9092/tcp,51820/udp"
@@ -126,7 +174,7 @@ INTERFACE="eth0"
 MODE="go_hmac_pcap_overlay"
 ```
 
-Apply edited configuration:
+If you manually edit the file, apply it with:
 
 ```bash
 sudo knockgate update

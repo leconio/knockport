@@ -50,14 +50,52 @@ KnockGate 使用 `libpcap` 抓包，不监听敲门端口；使用 HMAC 校验�
 - RHEL 系：Rocky Linux、AlmaLinux、CentOS Stream、Fedora
 - Arch Linux
 
-一键安装脚本会下载 GitHub Release 中的预编译产物，不会在目标服务器上编译 Go。
+## Quick Start
 
-## 安装
+服务器安装：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh | sudo bash
 sudo knockgate install
 ```
+
+按提示设置：
+
+```text
+保护端口：例如 5432,9092/tcp,51820/udp
+敲门端口：直接使用随机生成的一组 UDP 端口，或手动输入
+开门时长：默认 12h
+网卡：默认自动检测
+```
+
+安装完成后生成客户端导入 URL / 二维码：
+
+```bash
+sudo knockgate qr
+```
+
+客户端下载 Shell 脚本：
+
+```bash
+curl -fLO https://github.com/leconio/knockport/releases/latest/download/knockgate-knock.sh
+curl -fLO https://github.com/leconio/knockport/releases/latest/download/knockgate-check.sh
+chmod +x knockgate-knock.sh knockgate-check.sh
+```
+
+客户端敲门：
+
+```bash
+./knockgate-knock.sh --url 'knockgate://import/v1?...'
+```
+
+检查保护端口：
+
+```bash
+./knockgate-check.sh SERVER_IP 5432
+./knockgate-check.sh SERVER_IP 5432/tcp 5432/udp
+```
+
+## 下载
 
 Release 产物：
 
@@ -91,19 +129,29 @@ sudo knockgate
 常用命令：
 
 ```bash
-sudo knockgate install
-sudo knockgate reset
-sudo knockgate update
-sudo knockgate status
-sudo knockgate logs
-sudo knockgate allow 203.0.113.10
-sudo knockgate flush
-sudo knockgate clear
-sudo knockgate qr
-sudo knockgate uninstall
+sudo knockgate install       # 首次安装或修复
+sudo knockgate reset         # 重置保护端口、敲门端口、密钥和时间
+sudo knockgate update        # 应用当前保存的设置
+sudo knockgate status        # 查看服务状态、规则、白名单和配置
+sudo knockgate logs          # 查看最近日志
+sudo knockgate logs-follow   # 跟随日志
+sudo knockgate qr            # 输出客户端导入 URL / 二维码
+sudo knockgate allow IP      # 手动临时放行一个 IPv4
+sudo knockgate flush         # 清空临时白名单
+sudo knockgate reload        # 重建 KnockGate 自己的 nft 表，会清空临时白名单
+sudo knockgate clear         # 删除 table inet knockgate
+sudo knockgate uninstall     # 卸载
 ```
 
-## 配置文件
+## 配置管理
+
+推荐使用交互菜单修改配置：
+
+```bash
+sudo knockgate reset
+```
+
+配置文件由 KnockGate 管理，通常不需要手动编辑。下面的路径和示例主要用于排查问题或备份记录。
 
 配置文件路径：
 
@@ -111,7 +159,7 @@ sudo knockgate uninstall
 /etc/knockgate/knockgate.conf
 ```
 
-示例：
+示例内容：
 
 ```bash
 PROTECTED_PORTS="5432,9092/tcp,51820/udp"
@@ -124,7 +172,7 @@ INTERFACE="eth0"
 MODE="go_hmac_pcap_overlay"
 ```
 
-修改配置后应用：
+如果确实手动改了配置文件，可以执行：
 
 ```bash
 sudo knockgate update
