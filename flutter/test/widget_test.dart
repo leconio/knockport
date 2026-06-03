@@ -9,6 +9,6 @@ void main() {
 
     expect(find.text('KnockGate Client'), findsOneWidget);
     expect(find.text('UDP knock ports'), findsOneWidget);
-    expect(find.text('Protected TCP ports'), findsOneWidget);
+    expect(find.text('Protected ports'), findsOneWidget);
   });
 }

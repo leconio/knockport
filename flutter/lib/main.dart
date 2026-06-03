@@ -415,7 +415,9 @@ class _HomePageState extends State<HomePage> {
       _setProfile(profile);
       await _saveProfile();
       if (profile.protectedPorts.isEmpty) {
-        _append('No TCP protected ports to check.');
+        _append(
+          'No TCP protected ports to check. UDP-only ports cannot be confirmed by TCP check.',
+        );
         _setStatus('Connectivity check skipped');
         return;
       }
@@ -539,10 +541,9 @@ class _HomePageState extends State<HomePage> {
         TextField(
           controller: _protectedPortsController,
           decoration: const InputDecoration(
-            labelText: 'Protected TCP ports',
-            hintText: '5432,9092',
+            labelText: 'Protected ports',
+            hintText: '5432,9092/tcp,51820/udp',
           ),
-          keyboardType: TextInputType.number,
         ),
         const SizedBox(height: 12),
         Row(
@@ -813,7 +814,7 @@ List<int> parseProtectedTcpPorts(String text) {
       throw FormatException('Invalid port: $part');
     }
     final proto = pieces.length == 2 ? pieces[1].toLowerCase() : 'both';
-    if (proto != 'tcp' && proto != 'udp') {
+    if (proto != 'tcp' && proto != 'udp' && proto != 'both') {
       throw FormatException('Invalid protocol: $part');
     }
     if (proto == 'udp') {
