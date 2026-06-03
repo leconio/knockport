@@ -4,11 +4,12 @@ set -euo pipefail
 SSH_PORT="${SSH_PORT:-22}"
 PROTECTED_PORT="${PROTECTED_PORT:-5432}"
 ORDINARY_PORT="${ORDINARY_PORT:-15555}"
+CHECK_TIMEOUT="${CHECK_TIMEOUT:-3}"
 
 usage() {
     cat <<EOF
 Usage:
-  $(basename "$0") [--verbose] SERVER [PORT ...]
+  $(basename "$0") [--verbose] [--timeout SECONDS] SERVER [PORT ...]
 
 Check KnockGate connectivity only. This script does not send a knock sequence.
 Run it before and after the knock script to compare behavior.
@@ -20,15 +21,17 @@ Defaults:
   SSH_PORT:       ${SSH_PORT}
   PROTECTED_PORT: ${PROTECTED_PORT}
   ORDINARY_PORT:  ${ORDINARY_PORT}
+  CHECK_TIMEOUT:  ${CHECK_TIMEOUT}s
 
 Override ports with environment variables:
-  SSH_PORT=2222 PROTECTED_PORT=5432 ORDINARY_PORT=15555 $(basename "$0") SERVER_IP
+  SSH_PORT=2222 PROTECTED_PORT=5432 ORDINARY_PORT=15555 CHECK_TIMEOUT=2 $(basename "$0") SERVER_IP
 
 Examples:
   $(basename "$0") SERVER_IP
   $(basename "$0") SERVER_IP 12345
   $(basename "$0") SERVER_IP 22 80 443 5432
   $(basename "$0") --verbose SERVER_IP 5432
+  $(basename "$0") --timeout 5 SERVER_IP 5432
   SSH_PORT=2222 PROTECTED_PORT=5432 $(basename "$0") example.com
 
 Set KNOCKGATE_CHECK_NO_NET_WARN=1 to suppress local proxy/TUN warnings.
@@ -51,6 +54,14 @@ while [[ "$#" -gt 0 ]]; do
         -v|--verbose)
             VERBOSE=1
             shift
+            ;;
+        -t|--timeout)
+            if [[ -z "${2:-}" ]]; then
+                echo "Missing value for ${1}" >&2
+                exit 2
+            fi
+            CHECK_TIMEOUT="$2"
+            shift 2
             ;;
         --)
             shift
@@ -75,6 +86,11 @@ fi
 SERVER="$1"
 shift
 
+if ! [[ "${CHECK_TIMEOUT}" =~ ^[0-9]+$ ]] || (( CHECK_TIMEOUT < 1 )); then
+    echo "Invalid timeout: ${CHECK_TIMEOUT}" >&2
+    exit 2
+fi
+
 warn_local_network_context() {
     [[ "${KNOCKGATE_CHECK_NO_NET_WARN:-0}" == "1" ]] && return 0
     [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]] || return 0
@@ -97,19 +113,52 @@ is_port() {
     [[ "$1" =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 ))
 }
 
+run_nc_with_timeout() {
+    local port="$1"
+    local output_file="$2"
+    local pid
+    local elapsed=0
+
+    (
+        exec nc -vz -w "${CHECK_TIMEOUT}" "${SERVER}" "${port}"
+    ) >"${output_file}" 2>&1 &
+    pid=$!
+
+    while kill -0 "${pid}" 2>/dev/null; do
+        if (( elapsed >= CHECK_TIMEOUT )); then
+            kill "${pid}" 2>/dev/null || true
+            sleep 0.1
+            kill -9 "${pid}" 2>/dev/null || true
+            wait "${pid}" 2>/dev/null || true
+            printf 'TIMEOUT after %ss\n' "${CHECK_TIMEOUT}" >>"${output_file}"
+            return 124
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    wait "${pid}"
+}
+
 try_tcp() {
     local label="$1"
     local port="$2"
     local output
+    local output_file
+    local rc
 
+    output_file="$(mktemp)"
     set +e
-    output="$(nc -vz -w2 "${SERVER}" "${port}" 2>&1)"
-    local rc=$?
+    run_nc_with_timeout "${port}" "${output_file}"
+    rc=$?
     set -e
+    output="$(cat "${output_file}")"
+    rm -f "${output_file}"
 
     if [[ "${VERBOSE}" -eq 1 ]]; then
         echo
         echo "== ${label}: ${SERVER}:${port}/tcp =="
+        echo "timeout: ${CHECK_TIMEOUT}s"
         printf '%s\n' "${output}"
     fi
 
@@ -117,7 +166,7 @@ try_tcp() {
         echo "OPEN ${SERVER}:${port}/tcp"
     elif printf '%s\n' "${output}" | grep -qi "refused"; then
         echo "REFUSED ${SERVER}:${port}/tcp"
-    elif printf '%s\n' "${output}" | grep -Eqi "timed out|timeout|Operation now in progress"; then
+    elif [[ "${rc}" -eq 124 ]] || printf '%s\n' "${output}" | grep -Eqi "timed out|timeout|Operation now in progress"; then
         echo "FILTERED ${SERVER}:${port}/tcp"
     else
         echo "FAILED ${SERVER}:${port}/tcp"

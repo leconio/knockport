@@ -206,6 +206,12 @@ KnockGate 使用 TCP 敲门序列。客户端必须按服务器显示的顺序�
 ./rfcjp-knock.sh SERVER_IP 38127 19452 47219 26083 50001 50002
 ```
 
+每个敲门端口都有硬超时，默认 `1s`。需要时可以覆盖：
+
+```bash
+./rfcjp-knock.sh --timeout 2 SERVER_IP 38127 19452 47219 26083 50001 50002
+```
+
 等价的手动 `nc` 命令：
 
 ```bash
@@ -260,6 +266,13 @@ nc -z -w1 SERVER_IP 50002 || true
 
 ```bash
 ./rfcjp-check.sh SERVER_IP 22 80 443 5432
+```
+
+连通性检查有硬超时，默认 `3s`。需要时可以覆盖：
+
+```bash
+./rfcjp-check.sh --timeout 5 SERVER_IP 5432
+CHECK_TIMEOUT=5 ./rfcjp-check.sh SERVER_IP 5432
 ```
 
 覆盖默认检查端口：

@@ -206,6 +206,12 @@ Unlock with the helper script:
 ./rfcjp-knock.sh SERVER_IP 38127 19452 47219 26083 50001 50002
 ```
 
+Each knock attempt has a hard timeout. Default is `1s`; override it when needed:
+
+```bash
+./rfcjp-knock.sh --timeout 2 SERVER_IP 38127 19452 47219 26083 50001 50002
+```
+
 Equivalent manual `nc` sequence:
 
 ```bash
@@ -260,6 +266,13 @@ Check specific TCP ports:
 
 ```bash
 ./rfcjp-check.sh SERVER_IP 22 80 443 5432
+```
+
+Connectivity checks have a hard timeout. Default is `3s`; override it when needed:
+
+```bash
+./rfcjp-check.sh --timeout 5 SERVER_IP 5432
+CHECK_TIMEOUT=5 ./rfcjp-check.sh SERVER_IP 5432
 ```
 
 Override default check ports:
