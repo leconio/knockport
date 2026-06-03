@@ -80,8 +80,7 @@ Download the shell client on a client machine:
 
 ```bash
 curl -fLO https://github.com/leconio/knockport/releases/latest/download/knockgate-knock.sh
-curl -fLO https://github.com/leconio/knockport/releases/latest/download/knockgate-check.sh
-chmod +x knockgate-knock.sh knockgate-check.sh
+chmod +x knockgate-knock.sh
 ```
 
 Open protected ports from the client:
@@ -93,8 +92,8 @@ Open protected ports from the client:
 Check a protected port:
 
 ```bash
-./knockgate-check.sh SERVER_IP 5432
-./knockgate-check.sh SERVER_IP 5432/tcp 5432/udp
+./knockgate-knock.sh check SERVER_IP 5432
+./knockgate-knock.sh check SERVER_IP 5432/tcp 5432/udp
 ```
 
 ## Downloads
@@ -105,7 +104,6 @@ Release assets:
 https://github.com/leconio/knockport/releases/latest/download/knockgate_linux_amd64.tar.gz
 https://github.com/leconio/knockport/releases/latest/download/knockgate_linux_arm64.tar.gz
 https://github.com/leconio/knockport/releases/latest/download/knockgate-knock.sh
-https://github.com/leconio/knockport/releases/latest/download/knockgate-check.sh
 ```
 
 Installed server files:
@@ -213,14 +211,16 @@ Use the shell client from this repository:
 
 ```bash
 clients/shell/knockgate-knock.sh --url 'knockgate://import/v1?...'
-clients/shell/knockgate-knock.sh --secret BASE64URL_SECRET SERVER_IP 45669 65075 31244 20035 64168 59462
+clients/shell/knockgate-knock.sh --secret BASE64URL_SECRET --check-ports 5432 SERVER_IP 45669 65075 31244 20035 64168 59462
 ```
 
-Check a protected port:
+The import URL contains `protected_ports`, so URL mode checks protected ports automatically after knocking. Manual mode checks after knocking when `--check-ports` is provided.
+
+Check without knocking:
 
 ```bash
-clients/shell/knockgate-check.sh SERVER_IP 5432
-clients/shell/knockgate-check.sh SERVER_IP 5432/tcp 5432/udp
+clients/shell/knockgate-knock.sh check SERVER_IP 5432
+clients/shell/knockgate-knock.sh check SERVER_IP 5432/tcp 5432/udp
 ```
 
 TCP results:

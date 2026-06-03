@@ -78,8 +78,7 @@ sudo knockgate qr
 
 ```bash
 curl -fLO https://github.com/leconio/knockport/releases/latest/download/knockgate-knock.sh
-curl -fLO https://github.com/leconio/knockport/releases/latest/download/knockgate-check.sh
-chmod +x knockgate-knock.sh knockgate-check.sh
+chmod +x knockgate-knock.sh
 ```
 
 客户端敲门：
@@ -91,8 +90,8 @@ chmod +x knockgate-knock.sh knockgate-check.sh
 检查保护端口：
 
 ```bash
-./knockgate-check.sh SERVER_IP 5432
-./knockgate-check.sh SERVER_IP 5432/tcp 5432/udp
+./knockgate-knock.sh check SERVER_IP 5432
+./knockgate-knock.sh check SERVER_IP 5432/tcp 5432/udp
 ```
 
 ## 下载
@@ -103,7 +102,6 @@ Release 产物：
 https://github.com/leconio/knockport/releases/latest/download/knockgate_linux_amd64.tar.gz
 https://github.com/leconio/knockport/releases/latest/download/knockgate_linux_arm64.tar.gz
 https://github.com/leconio/knockport/releases/latest/download/knockgate-knock.sh
-https://github.com/leconio/knockport/releases/latest/download/knockgate-check.sh
 ```
 
 服务端安装路径：
@@ -211,14 +209,16 @@ sudo knockgate qr
 
 ```bash
 clients/shell/knockgate-knock.sh --url 'knockgate://import/v1?...'
-clients/shell/knockgate-knock.sh --secret BASE64URL_SECRET SERVER_IP 45669 65075 31244 20035 64168 59462
+clients/shell/knockgate-knock.sh --secret BASE64URL_SECRET --check-ports 5432 SERVER_IP 45669 65075 31244 20035 64168 59462
 ```
 
-检查保护端口：
+导入 URL 包含 `protected_ports`，所以 URL 模式敲门完成后会自动检测保护端口。手动 secret 模式提供 `--check-ports` 后也会在敲门完成后检测。
+
+只检测，不敲门：
 
 ```bash
-clients/shell/knockgate-check.sh SERVER_IP 5432
-clients/shell/knockgate-check.sh SERVER_IP 5432/tcp 5432/udp
+clients/shell/knockgate-knock.sh check SERVER_IP 5432
+clients/shell/knockgate-knock.sh check SERVER_IP 5432/tcp 5432/udp
 ```
 
 TCP 检查结果：
@@ -229,7 +229,7 @@ REFUSED   主机可达，但端口没有服务监听
 FILTERED  连接超时
 ```
 
-UDP 没有通用可靠握手。`knockgate-check.sh` 对 UDP 只能发送探测包，不能证明 UDP 端口已开放。
+UDP 没有通用可靠握手。客户端对 UDP 只能发送探测包，不能证明 UDP 端口已开放。
 
 ## Flutter 客户端
 

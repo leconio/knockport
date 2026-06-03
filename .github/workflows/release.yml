@@ -59,7 +59,7 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Prepare shell client assets
-        run: chmod 0755 clients/shell/knockgate-knock.sh clients/shell/knockgate-check.sh
+        run: chmod 0755 clients/shell/knockgate-knock.sh
       - uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -68,4 +68,3 @@ jobs:
             dist/knockgate_linux_arm64.tar.gz
             dist/knockgate_linux_arm64.tar.gz.sha256
             clients/shell/knockgate-knock.sh
-            clients/shell/knockgate-check.sh

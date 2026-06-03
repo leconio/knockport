@@ -19,7 +19,7 @@ go build -trimpath \
 cp README.md README.zh-CN.md LICENSE install.sh "${OUT_DIR}/${PKG}/"
 mkdir -p "${OUT_DIR}/${PKG}/clients"
 cp -R clients/shell "${OUT_DIR}/${PKG}/clients/"
-chmod 0755 "${OUT_DIR}/${PKG}/knockgate" "${OUT_DIR}/${PKG}/install.sh" "${OUT_DIR}/${PKG}/clients/shell/knockgate-knock.sh" "${OUT_DIR}/${PKG}/clients/shell/knockgate-check.sh"
+chmod 0755 "${OUT_DIR}/${PKG}/knockgate" "${OUT_DIR}/${PKG}/install.sh" "${OUT_DIR}/${PKG}/clients/shell/knockgate-knock.sh"
 
 tar -C "${OUT_DIR}" -czf "${OUT_DIR}/${PKG}.tar.gz" "${PKG}"
 rm -rf "${OUT_DIR:?}/${PKG}"
