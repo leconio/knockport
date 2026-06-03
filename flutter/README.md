@@ -27,7 +27,7 @@ Fields:
 - `scheme=udp-hmac` is required.
 - `host` is the server hostname or IP.
 - `knock_ports` is the ordered UDP knock sequence.
-- `protected_ports` are protected ports. Use `2345` for both TCP/UDP, `2345/tcp` for TCP only, and `2345/udp` for UDP only.
+- `protected_ports` are protected ports, separated with commas. Use `2345` for both TCP/UDP, `2345/tcp` for TCP only, and `2345/udp` for UDP only.
 - `seq_timeout` is the server-side ordered knock timeout.
 - `open_timeout` is the nftables allowlist timeout.
 - `hmac_window` is the timestamp tolerance in seconds.

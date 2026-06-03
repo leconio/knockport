@@ -28,6 +28,12 @@ Protected ports support protocol suffixes:
 2345/udp  protect UDP only
 ```
 
+Multiple protected ports are separated with commas:
+
+```text
+5432,9092/tcp,51820/udp
+```
+
 Knock ports are always UDP destination ports.
 
 ## Requirements

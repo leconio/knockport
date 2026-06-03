@@ -351,7 +351,7 @@ func PromptConfig(current config.Config) (config.Config, error) {
 	fmt.Println(ui.Yellow(ui.T("云防火墙必须允许 UDP 敲门包到达主机；主机 nftables 不需要开放敲门端口。", "Cloud firewalls must allow UDP knock packets to reach the host; host nftables does not need to open knock ports.")))
 	fmt.Println()
 
-	protected := promptProtectedPorts(ui.T("保护端口，可写 2345、2345/tcp、2345/udp", "Protected ports, use 2345, 2345/tcp, or 2345/udp"), current.ProtectedPorts)
+	protected := promptProtectedPorts(ui.T("保护端口，多个用逗号分隔，可写 2345、2345/tcp、2345/udp", "Protected ports, comma-separated; use 2345, 2345/tcp, or 2345/udp"), current.ProtectedPorts)
 	avoid := append([]int{}, config.ProtectedPortNumbers(protected)...)
 	avoid = append(avoid, detectListeningPorts()...)
 	knocks := rollKnockPorts(avoid, config.DefaultKnockCount)
