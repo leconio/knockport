@@ -313,7 +313,7 @@ detect_os() {
 }
 
 install_packages() {
-    if command -v nft >/dev/null 2>&1 && command -v knockd >/dev/null 2>&1 && command -v ip >/dev/null 2>&1; then
+    if command -v nft >/dev/null 2>&1 && command -v knockd >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 && command -v qrencode >/dev/null 2>&1; then
         log "依赖命令已存在，跳过包管理器安装。"
         refresh_binaries
         return 0
@@ -321,14 +321,34 @@ install_packages() {
 
     detect_os
 
-    log "正在安装依赖：nftables、knockd/knock-server、iproute2/iproute。"
+    if command -v nft >/dev/null 2>&1 && command -v knockd >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 && ! command -v qrencode >/dev/null 2>&1; then
+        log "核心依赖已存在，正在安装二维码工具 qrencode。"
+        case "${PKG_FAMILY}" in
+            apt)
+                if ! DEBIAN_FRONTEND=noninteractive apt-get install -y qrencode; then
+                    apt-get update
+                    DEBIAN_FRONTEND=noninteractive apt-get install -y qrencode || warn "qrencode 安装失败，二维码菜单仍会输出协议 URL。"
+                fi
+                ;;
+            dnf)
+                dnf install -y qrencode || warn "qrencode 安装失败，二维码菜单仍会输出协议 URL。"
+                ;;
+            pacman)
+                pacman -Sy --noconfirm qrencode || warn "qrencode 安装失败，二维码菜单仍会输出协议 URL。"
+                ;;
+        esac
+        refresh_binaries
+        return 0
+    fi
+
+    log "正在安装依赖：nftables、knockd/knock-server、iproute2/iproute、qrencode。"
     case "${PKG_FAMILY}" in
         apt)
             apt-get update
-            DEBIAN_FRONTEND=noninteractive apt-get install -y nftables knockd iproute2
+            DEBIAN_FRONTEND=noninteractive apt-get install -y nftables knockd iproute2 qrencode
             ;;
         dnf)
-            dnf install -y nftables iproute
+            dnf install -y nftables iproute qrencode || dnf install -y nftables iproute
             if ! dnf install -y knock-server; then
                 log "Package knock-server not available, trying knockd."
                 if ! dnf install -y knockd; then
@@ -337,7 +357,7 @@ install_packages() {
             fi
             ;;
         pacman)
-            pacman -Sy --noconfirm nftables knockd iproute2
+            pacman -Sy --noconfirm nftables knockd iproute2 qrencode
             ;;
         *)
             die "不支持的包管理类型：${PKG_FAMILY}"
@@ -1583,30 +1603,105 @@ restore_firewall_config_backup_noninteractive() {
     fi
 }
 
-test_config() {
+url_encode() {
+    local input="$1"
+    local output=""
+    local i char hex
+
+    for ((i = 0; i < ${#input}; i++)); do
+        char="${input:i:1}"
+        case "${char}" in
+            [a-zA-Z0-9.~_-]) output+="${char}" ;;
+            *) printf -v hex '%%%02X' "'${char}"; output+="${hex}" ;;
+        esac
+    done
+
+    printf '%s\n' "${output}"
+}
+
+detect_server_host() {
+    local host=""
+
+    if [[ -n "${SSH_CONNECTION:-}" ]]; then
+        host="$(awk '{print $3}' <<< "${SSH_CONNECTION}")"
+    fi
+
+    if [[ -z "${host}" ]] && command -v ip >/dev/null 2>&1; then
+        host="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '
+            {
+                for (i = 1; i <= NF; i++) {
+                    if ($i == "src" && (i + 1) <= NF) {
+                        print $(i + 1)
+                        exit
+                    }
+                }
+            }
+        ')"
+    fi
+
+    if [[ -z "${host}" ]] && command -v hostname >/dev/null 2>&1; then
+        host="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    fi
+
+    printf '%s\n' "${host:-SERVER_IP}"
+}
+
+build_client_import_url() {
+    local host="$1"
+    local label="${2:-KnockGate}"
+
+    printf 'knockgate://import/v1?host=%s&scheme=%s&knock_ports=%s&protected_ports=%s&seq_timeout=%s&open_timeout=%s&label=%s\n' \
+        "$(url_encode "${host}")" \
+        "udp" \
+        "$(url_encode "${KNOCK_PORTS}")" \
+        "$(url_encode "${PROTECTED_PORTS}")" \
+        "$(url_encode "${SEQ_TIMEOUT}")" \
+        "$(url_encode "${OPEN_TIMEOUT}")" \
+        "$(url_encode "${label}")"
+}
+
+show_client_import_qr() {
     require_root
     load_config
-    refresh_binaries
 
-    echo "正在检查 ${NFT_CONF}："
-    "${NFT_BIN}" -c -f "${NFT_CONF}"
+    local default_host
+    local host
+    local label
+    local url
+
+    default_host="$(detect_server_host)"
+    echo
+    heading "$(tr_text "客户端一键导入" "Client one-tap import")"
+    info "$(tr_text "二维码内容是 KnockGate 专用协议 URL，用于未来客户端一键导入 UDP 敲门顺序。" "The QR code contains a KnockGate custom protocol URL for future one-tap UDP sequence import.")"
+    warn "$(tr_text "请只把此二维码发给可信客户端；拿到它的人可以获得敲门顺序。" "Share this QR code only with trusted clients; it contains the knock sequence.")"
+    echo
+
+    host="$(prompt_default "$(tr_text "客户端连接服务器地址/IP" "Server host/IP for clients")" "${default_host}")"
+    label="$(prompt_default "$(tr_text "配置名称" "Profile name")" "KnockGate")"
+    url="$(build_client_import_url "${host}" "${label}")"
 
     echo
-    echo "正在检查 knockd 服务能否启动/重启。"
-    if ! require_upper_yes "将重启 knockd 以验证它能启动。"; then
-        echo "已跳过 knockd 重启检查。"
-        return 0
+    if command -v qrencode >/dev/null 2>&1; then
+        qrencode -t ANSIUTF8 "${url}"
+    else
+        warn "$(tr_text "未找到 qrencode，无法在终端生成二维码。" "qrencode is not installed; cannot render a terminal QR code.")"
+        echo "$(tr_text "安装提示：" "Install hint:")"
+        echo "  Debian/Ubuntu: apt-get install -y qrencode"
+        echo "  RHEL/Fedora:   dnf install -y qrencode"
+        echo "  Arch:          pacman -Sy --noconfirm qrencode"
     fi
 
-    systemctl restart knockd
-    sleep 1
-    if systemctl is-active --quiet knockd; then
-        echo "knockd 处于 active 状态。"
-    else
-        echo "knockd 未处于 active 状态，最近日志："
-        journalctl -u knockd -n 50 --no-pager || true
-        return 1
-    fi
+    echo
+    heading "$(tr_text "协议 URL" "Protocol URL")"
+    printf '%s\n' "${url}"
+    echo
+    info "$(tr_text "字段：" "Fields:")"
+    echo "  host=${host}"
+    echo "  scheme=udp"
+    echo "  knock_ports=${KNOCK_PORTS}"
+    echo "  protected_ports=${PROTECTED_PORTS}"
+    echo "  seq_timeout=${SEQ_TIMEOUT}"
+    echo "  open_timeout=${OPEN_TIMEOUT}"
 }
 
 uninstall() {
@@ -1689,7 +1784,7 @@ main_menu() {
         echo "$(color_text "${COLOR_BLUE}" "8.") $(tr_text "清空临时白名单" "Flush allowlist")"
         echo "$(color_text "${COLOR_BLUE}" "9.") $(tr_text "恢复防火墙备份" "Restore firewall backup")"
         echo "$(color_text "${COLOR_BLUE}" "10.") $(tr_text "卸载" "Uninstall")"
-        echo "$(color_text "${COLOR_BLUE}" "11.") $(tr_text "测试配置" "Test config")"
+        echo "$(color_text "${COLOR_BLUE}" "11.") $(tr_text "生成客户端导入二维码" "Generate client import QR")"
         echo "$(color_text "${COLOR_BLUE}" "12.") $(tr_text "退出" "Exit")"
         echo
         local choice
@@ -1705,7 +1800,7 @@ main_menu() {
             8) flush_allowlist ;;
             9) restore_firewall_backup ;;
             10) uninstall ;;
-            11) test_config ;;
+            11) show_client_import_qr ;;
             12) exit 0 ;;
             *) warn "$(tr_text "无效选择。" "Invalid choice.")" ;;
         esac

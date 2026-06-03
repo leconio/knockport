@@ -64,8 +64,9 @@ table inet knockgate {
 - `nftables`
 - `knockd`
 - `iproute2`
+- `qrencode`
 
-脚本会在支持的发行版上尝试安装缺失依赖。如果找不到 `knockd` 包，会明确报错并停止。
+脚本会在支持的发行版上尝试安装缺失依赖。如果找不到 `knockd` 包，会明确报错并停止。`qrencode` 用于在终端生成客户端导入二维码。
 
 ## 文件
 
@@ -181,7 +182,7 @@ KnockGate 管理器
 8. 清空临时白名单
 9. 恢复防火墙备份
 10. 卸载
-11. 测试配置
+11. 生成客户端导入二维码
 12. 退出
 ```
 
@@ -261,6 +262,16 @@ printf knockgate | nc -u -w1 SERVER_IP 50002 || true
 - `knockd` 是否监听了正确网卡。
 
 如果本机代理、VPN 或 TUN 设备拦截了 UDP 流量，敲门包可能根本不会到服务器。这种情况下客户端脚本会执行完，但服务器白名单仍然为空。请使用干净网络路径、给服务器 IP 设置代理绕过，或换一台客户端主机测试。
+
+## 客户端导入 URL
+
+菜单第 11 项会生成二维码，并在二维码下方显示协议 URL。URL 使用 KnockGate 专用协议，供未来客户端 App 一键导入：
+
+```text
+knockgate://import/v1?host=SERVER_IP&scheme=udp&knock_ports=38127%2C19452%2C47219&protected_ports=5432&seq_timeout=10&open_timeout=12h&label=KnockGate
+```
+
+二维码包含 UDP 敲门顺序，请把它当作敏感信息，只分享给可信客户端。
 
 ## 客户端辅助脚本
 

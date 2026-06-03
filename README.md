@@ -64,8 +64,9 @@ Runtime dependencies:
 - `nftables`
 - `knockd`
 - `iproute2`
+- `qrencode`
 
-The script can install missing packages on supported distributions. If `knockd` is unavailable, it stops with a clear error.
+The script can install missing packages on supported distributions. If `knockd` is unavailable, it stops with a clear error. `qrencode` is used to render terminal QR codes for client import URLs.
 
 ## Files
 
@@ -181,7 +182,7 @@ KnockGate Manager
 8. Flush temporary allowlist
 9. Restore firewall backup
 10. Uninstall
-11. Test config
+11. Generate client import QR
 12. Exit
 ```
 
@@ -261,6 +262,16 @@ If the sequence fails, check:
 - `knockd` is listening on the correct interface.
 
 If a local proxy, VPN, or TUN device intercepts UDP traffic, the knock packets may never reach the server. In that case the helper may finish but the server allowlist stays empty. Test from a clean route, bypass the proxy for the server IP, or use another host as the client.
+
+## Client Import URL
+
+Menu item 11 prints a QR code and the protocol URL below it. The URL uses KnockGate's custom scheme for a future client app:
+
+```text
+knockgate://import/v1?host=SERVER_IP&scheme=udp&knock_ports=38127%2C19452%2C47219&protected_ports=5432&seq_timeout=10&open_timeout=12h&label=KnockGate
+```
+
+The QR code contains the UDP knock sequence. Treat it like a secret and share it only with trusted clients.
 
 ## Client Helpers
 
