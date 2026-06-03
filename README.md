@@ -241,6 +241,8 @@ UDP checks send a probe only. UDP has no handshake, so a generic client cannot r
 
 The Flutter client is in [`flutter/`](flutter/). It supports profile import URLs, QR scanning on Android/iOS/macOS, manual profile editing, UDP-HMAC knocking, and connectivity checks.
 
+![KnockGate dashboard illustration](docs/images/knockgate-hero.jpg)
+
 ```bash
 cd flutter
 flutter pub get

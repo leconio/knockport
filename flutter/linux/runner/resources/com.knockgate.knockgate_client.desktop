@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=KnockGate
+Comment=UDP HMAC port knocking client
+Exec=knockgate_client
+Icon=com.knockgate.knockgate_client
+Categories=Network;Security;
+Terminal=false

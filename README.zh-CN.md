@@ -239,6 +239,8 @@ UDP 没有通用可靠握手。客户端对 UDP 只能发送探测包，不能�
 
 Flutter 客户端位于 [`flutter/`](flutter/)，支持导入 URL、Android/iOS/macOS 扫码、手动编辑配置、UDP-HMAC 敲门和连通性检查。
 
+![KnockGate 展示图](docs/images/knockgate-hero.jpg)
+
 ```bash
 cd flutter
 flutter pub get
