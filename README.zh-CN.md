@@ -114,6 +114,18 @@ curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/knockgate.sh
 curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh | sudo KNOCKGATE_REPO=leconio/knockport bash
 ```
 
+安装器默认只安装服务端管理命令：
+
+```text
+/usr/local/bin/knockgate
+```
+
+客户端辅助脚本默认不会装到服务器。如需在客户端机器安装：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh | sudo KNOCKGATE_REPO=leconio/knockport INSTALL_CLIENT_HELPERS=1 bash
+```
+
 Fork 或自建 raw 文件地址时：
 
 ```bash
@@ -247,6 +259,8 @@ nc -z -w1 SERVER_IP 50002 || true
 - 敲门和访问保护端口是否来自同一个公网来源 IP；
 - 是否有代理、VPN、NAT 改变来源 IP；
 - `knockd` 是否监听了正确网卡。
+
+如果本机代理、VPN 或 TUN 设备拦截了 TCP 连接尝试，敲门包可能根本不会到服务器。这种情况下客户端脚本会执行完，但服务器白名单仍然为空。请使用干净网络路径、给服务器 IP 设置代理绕过，或换一台客户端主机测试。
 
 ## 客户端辅助脚本
 

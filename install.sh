@@ -5,6 +5,7 @@ PROJECT_NAME="KnockGate"
 DEFAULT_REPO="OWNER/REPO"
 DEFAULT_BRANCH="main"
 INSTALL_DIR="/usr/local/bin"
+INSTALL_CLIENT_HELPERS="${INSTALL_CLIENT_HELPERS:-0}"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -67,18 +68,23 @@ main() {
   yellow "Source: ${raw_base}"
 
   download_file "$raw_base" "knockgate.sh" "${tmpdir}/knockgate"
-  download_file "$raw_base" "rfcjp-knock.sh" "${tmpdir}/rfcjp-knock"
-  download_file "$raw_base" "rfcjp-check.sh" "${tmpdir}/rfcjp-check"
-
   install -m 0755 "${tmpdir}/knockgate" "${INSTALL_DIR}/knockgate"
-  install -m 0755 "${tmpdir}/rfcjp-knock" "${INSTALL_DIR}/rfcjp-knock"
-  install -m 0755 "${tmpdir}/rfcjp-check" "${INSTALL_DIR}/rfcjp-check"
 
   green "Installed:"
-  printf '  %s\n' \
-    "${INSTALL_DIR}/knockgate" \
-    "${INSTALL_DIR}/rfcjp-knock" \
-    "${INSTALL_DIR}/rfcjp-check"
+  printf '  %s\n' "${INSTALL_DIR}/knockgate"
+
+  if [[ "${INSTALL_CLIENT_HELPERS}" == "1" ]]; then
+    download_file "$raw_base" "rfcjp-knock.sh" "${tmpdir}/rfcjp-knock"
+    download_file "$raw_base" "rfcjp-check.sh" "${tmpdir}/rfcjp-check"
+    install -m 0755 "${tmpdir}/rfcjp-knock" "${INSTALL_DIR}/rfcjp-knock"
+    install -m 0755 "${tmpdir}/rfcjp-check" "${INSTALL_DIR}/rfcjp-check"
+    green "Installed optional client helpers:"
+    printf '  %s\n' \
+      "${INSTALL_DIR}/rfcjp-knock" \
+      "${INSTALL_DIR}/rfcjp-check"
+  else
+    yellow "Client helpers were not installed. Set INSTALL_CLIENT_HELPERS=1 on client machines if needed."
+  fi
 
   yellow "Run the server manager with: sudo knockgate"
 }

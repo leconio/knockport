@@ -114,6 +114,18 @@ Installer script form:
 curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh | sudo KNOCKGATE_REPO=leconio/knockport bash
 ```
 
+The installer installs only the server manager by default:
+
+```text
+/usr/local/bin/knockgate
+```
+
+Client helpers are not installed on the server unless explicitly requested. On a client machine:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh | sudo KNOCKGATE_REPO=leconio/knockport INSTALL_CLIENT_HELPERS=1 bash
+```
+
 For forks or self-hosted raw file URLs:
 
 ```bash
@@ -247,6 +259,8 @@ If the sequence fails, check:
 - knocking and protected access use the same public source IP;
 - proxy, VPN, or NAT is not changing source IP;
 - `knockd` is listening on the correct interface.
+
+If a local proxy, VPN, or TUN device intercepts TCP connection attempts, the knock packets may never reach the server. In that case the helper may finish but the server allowlist stays empty. Test from a clean route, bypass the proxy for the server IP, or use another host as the client.
 
 ## Client Helpers
 
