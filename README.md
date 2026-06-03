@@ -224,6 +224,15 @@ Each knock attempt has a hard timeout. Default is `1s`; override it when needed:
 ./rfcjp-knock.sh --timeout 2 SERVER_IP 38127 19452 47219 26083 50001 50002
 ```
 
+For the most reliable knock, install `nping` from Nmap or `hping3` on the client and send one TCP SYN per port:
+
+```bash
+sudo ./rfcjp-knock.sh --method nping SERVER_IP 38127 19452 47219 26083 50001 50002
+sudo ./rfcjp-knock.sh --method hping3 SERVER_IP 38127 19452 47219 26083 50001 50002
+```
+
+If only `nc` is available, the helper falls back to it. `nc` can retransmit TCP SYN packets on filtered ports, which may break a strict knock sequence.
+
 Equivalent manual `nc` sequence:
 
 ```bash
@@ -256,6 +265,7 @@ If the sequence fails, check:
 
 - ports are in the exact order;
 - all knocks finished within `SEQ_TIMEOUT`;
+- use `nping` or `hping3` instead of `nc` if logs show repeated early stages;
 - knocking and protected access use the same public source IP;
 - proxy, VPN, or NAT is not changing source IP;
 - `knockd` is listening on the correct interface.

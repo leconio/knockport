@@ -224,6 +224,15 @@ KnockGate 使用 TCP 敲门序列。客户端必须按服务器显示的顺序�
 ./rfcjp-knock.sh --timeout 2 SERVER_IP 38127 19452 47219 26083 50001 50002
 ```
 
+最可靠的敲门方式是在客户端安装 Nmap 的 `nping` 或 `hping3`，每个端口只发一个 TCP SYN：
+
+```bash
+sudo ./rfcjp-knock.sh --method nping SERVER_IP 38127 19452 47219 26083 50001 50002
+sudo ./rfcjp-knock.sh --method hping3 SERVER_IP 38127 19452 47219 26083 50001 50002
+```
+
+如果只有 `nc`，脚本会退回使用 `nc`。但 `nc` 在被 drop 的端口上可能产生 TCP SYN 重传，严格顺序敲门可能因此被打断。
+
 等价的手动 `nc` 命令：
 
 ```bash
@@ -256,6 +265,7 @@ nc -z -w1 SERVER_IP 50002 || true
 
 - 端口顺序是否完全正确；
 - 是否在 `SEQ_TIMEOUT` 内完成；
+- 如果日志显示前几个阶段重复，优先用 `nping` 或 `hping3`，不要用 `nc`；
 - 敲门和访问保护端口是否来自同一个公网来源 IP；
 - 是否有代理、VPN、NAT 改变来源 IP；
 - `knockd` 是否监听了正确网卡。
