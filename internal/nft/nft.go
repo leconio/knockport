@@ -101,6 +101,8 @@ add chain %s %s input {
 }
 
 func AddAllow(ip string, timeout string) error {
+	// nft set 的 key 唯一；先删再加可以在旧版 nftables 上刷新 timeout。
+	_, _ = Run("nft", "delete", "element", Family, Table, Set, "{", ip, "}")
 	_, err := Run("nft", "add", "element", Family, Table, Set, "{", ip, "timeout", timeout, "}")
 	return err
 }

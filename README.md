@@ -11,6 +11,7 @@ It uses UDP port sequences captured with `libpcap`, validates the final packet w
 - UDP sequence knocking with no listening socket on knock ports
 - Final-step `HMAC-SHA256 + timestamp + nonce` verification
 - Temporary IPv4 allowlist backed by an `nftables` timeout set
+- Repeated successful knocks from the same source refresh the allowlist timeout
 - Protected TCP and UDP ports
 - Does not rewrite `/etc/nftables.conf`
 - Does not flush existing firewall rules
