@@ -2,8 +2,9 @@
 set -euo pipefail
 
 # KnockGate: sequential UDP port knocking + nftables timeout allowlist.
-# Full firewall takeover mode: inbound policy drop, explicit exception ports,
-# protected ports opened only to IPs in a temporary nftables set.
+# Protective overlay mode: do not rewrite the existing firewall. KnockGate only
+# pre-filters protected TCP ports; all other traffic is left to the existing
+# firewall unchanged.
 
 APP_NAME="KnockGate"
 INSTALL_PATH="/usr/local/bin/knockgate"
@@ -11,7 +12,8 @@ CONFIG_DIR="/etc/knockgate"
 CONFIG_FILE="${CONFIG_DIR}/knockgate.conf"
 BACKUP_DIR="${CONFIG_DIR}/backups"
 README_FILE="${CONFIG_DIR}/README"
-NFT_CONF="/etc/nftables.conf"
+KNOCKGATE_NFT_CONF="${CONFIG_DIR}/knockgate.nft"
+KNOCKGATE_NFT_SERVICE="/etc/systemd/system/knockgate-nft.service"
 KNOCKD_CONF="/etc/knockd.conf"
 KNOCKD_DEFAULT="/etc/default/knockd"
 KNOCKD_OVERRIDE_DIR="/etc/systemd/system/knockd.service.d"
@@ -20,19 +22,15 @@ KNOCKD_OVERRIDE_CONF="${KNOCKD_OVERRIDE_DIR}/override.conf"
 NFT_TABLE_FAMILY="inet"
 NFT_TABLE_NAME="knockgate"
 NFT_SET_NAME="knock_allow_temp_v4"
-MODE="full_takeover"
+MODE="protective_overlay"
 
 DEFAULT_PROTECTED_PORTS="5432"
-DEFAULT_EXCEPTION_PORTS="22"
-DEFAULT_UDP_EXCEPTION_PORTS=""
 DEFAULT_KNOCK_PORTS="38127,19452,47219,26083"
 DEFAULT_OPEN_TIMEOUT="12h"
 DEFAULT_SEQ_TIMEOUT="10"
 DEFAULT_SSH_PORT="22"
 
 PROTECTED_PORTS="${DEFAULT_PROTECTED_PORTS}"
-EXCEPTION_PORTS="${DEFAULT_EXCEPTION_PORTS}"
-UDP_EXCEPTION_PORTS="${DEFAULT_UDP_EXCEPTION_PORTS}"
 KNOCK_PORTS="${DEFAULT_KNOCK_PORTS}"
 OPEN_TIMEOUT="${DEFAULT_OPEN_TIMEOUT}"
 SEQ_TIMEOUT="${DEFAULT_SEQ_TIMEOUT}"
@@ -45,8 +43,6 @@ OS_ID_LIKE=""
 PKG_FAMILY=""
 NFT_BIN=""
 KNOCKD_BIN=""
-DETECTED_TCP_EXCEPTION_PORTS=""
-DETECTED_UDP_EXCEPTION_PORTS=""
 UI_LANG="${KNOCKGATE_LANG:-}"
 
 COLOR_RESET=""
@@ -169,27 +165,6 @@ backup_file() {
         dest="${BACKUP_DIR}/${base}.$(timestamp).bak"
         cp -a "${file}" "${dest}"
         log "已备份 ${file} -> ${dest}"
-    fi
-}
-
-backup_live_ruleset() {
-    local dest
-
-    ensure_dirs
-    if command -v nft >/dev/null 2>&1; then
-        dest="${BACKUP_DIR}/ruleset.$(timestamp).nft"
-        {
-            echo "flush ruleset"
-            nft list ruleset
-        } > "${dest}.tmp"
-        if [[ -s "${dest}.tmp" ]]; then
-            mv "${dest}.tmp" "${dest}"
-            chmod 600 "${dest}"
-            log "已备份 live nft ruleset -> ${dest}"
-        else
-            rm -f "${dest}.tmp"
-            log "无法备份当前 live nft 规则集。"
-        fi
     fi
 }
 
@@ -415,29 +390,25 @@ load_config() {
     fi
 
     PROTECTED_PORTS="${PROTECTED_PORTS:-${DEFAULT_PROTECTED_PORTS}}"
-    EXCEPTION_PORTS="${EXCEPTION_PORTS:-${DEFAULT_EXCEPTION_PORTS}}"
-    UDP_EXCEPTION_PORTS="${UDP_EXCEPTION_PORTS:-${DEFAULT_UDP_EXCEPTION_PORTS}}"
     KNOCK_PORTS="${KNOCK_PORTS:-${DEFAULT_KNOCK_PORTS}}"
     OPEN_TIMEOUT="${OPEN_TIMEOUT:-${DEFAULT_OPEN_TIMEOUT}}"
     SEQ_TIMEOUT="${SEQ_TIMEOUT:-${DEFAULT_SEQ_TIMEOUT}}"
     SSH_PORT="${SSH_PORT:-${DEFAULT_SSH_PORT}}"
     INTERFACE="${INTERFACE:-}"
-    MODE="${MODE:-full_takeover}"
+    MODE="protective_overlay"
 }
 
 save_config() {
     ensure_dirs
     backup_file "${CONFIG_FILE}"
-    cat > "${CONFIG_FILE}" <<EOF
+cat > "${CONFIG_FILE}" <<EOF
 PROTECTED_PORTS="${PROTECTED_PORTS}"
-EXCEPTION_PORTS="${EXCEPTION_PORTS}"
-UDP_EXCEPTION_PORTS="${UDP_EXCEPTION_PORTS}"
 KNOCK_PORTS="${KNOCK_PORTS}"
 OPEN_TIMEOUT="${OPEN_TIMEOUT}"
 SEQ_TIMEOUT=${SEQ_TIMEOUT}
 SSH_PORT=${SSH_PORT}
 INTERFACE="${INTERFACE}"
-MODE="full_takeover"
+MODE="protective_overlay"
 EOF
     chmod 600 "${CONFIG_FILE}"
     log "已写入 ${CONFIG_FILE}"
@@ -721,39 +692,6 @@ roll_knock_ports() {
     printf '%s\n' "${rolled}"
 }
 
-detect_exception_defaults() {
-    local detected_ssh
-    local nft_tcp
-    local nft_udp
-
-    detected_ssh="$(detect_ssh_port)"
-    nft_tcp="$(detect_nft_accept_ports tcp || true)"
-    nft_udp="$(detect_nft_accept_ports udp || true)"
-
-    SSH_PORT="${detected_ssh:-${DEFAULT_SSH_PORT}}"
-    DETECTED_TCP_EXCEPTION_PORTS="$(join_port_lists "${nft_tcp}" "${detected_ssh}")"
-    DETECTED_UDP_EXCEPTION_PORTS="$(join_port_lists "${nft_udp}")"
-
-    if [[ -z "${DETECTED_TCP_EXCEPTION_PORTS}" ]]; then
-        DETECTED_TCP_EXCEPTION_PORTS="${SSH_PORT}"
-    fi
-}
-
-print_autodetect_summary() {
-    echo
-    heading "$(tr_text "自动识别到的常开端口候选：" "Auto-detected always-open port candidates:")"
-    echo "  $(tr_text "SSH 端口：" "SSH port:") ${SSH_PORT}"
-    echo "  $(tr_text "将保持常开的 TCP 端口：" "TCP ports that will stay open:") ${DETECTED_TCP_EXCEPTION_PORTS:-none}"
-    echo "  $(tr_text "将保持常开的 UDP 端口：" "UDP ports that will stay open:") ${DETECTED_UDP_EXCEPTION_PORTS:-none}"
-    echo
-    info "$(tr_text "识别来源：" "Detection sources:")"
-    echo "  - $(tr_text "当前 SSH 会话端口（如果可用）" "current SSH session port when available")"
-    echo "  - $(tr_text "当前 nftables/UFW 的 accept 规则（如果可读取）" "current nftables/UFW accept rules when readable")"
-    echo
-    warn "$(tr_text "不会因为某个端口正在监听就自动开放。只有当前防火墙已经放行的端口，加上 SSH 端口，会保持常开。" "Listening sockets are not opened automatically. Only ports already accepted by the current firewall, plus the SSH port, are kept open.")"
-    warn "$(tr_text "自动识别会忽略 KnockGate 自己的旧规则，避免重装/重置时继承已经废弃的常开端口。" "Auto-detection ignores old KnockGate rules so reinstall/reset does not inherit obsolete always-open ports.")"
-}
-
 print_rolled_knock_summary() {
     local avoid="$1"
 
@@ -762,7 +700,7 @@ print_rolled_knock_summary() {
     echo "  ${KNOCK_PORTS}"
     echo
     info "$(tr_text "已避开：" "Avoided:")"
-    echo "  - $(tr_text "当前防火墙常开 TCP/UDP 端口" "current always-open TCP/UDP firewall ports")"
+    echo "  - $(tr_text "当前防火墙 accept 端口" "current firewall accepted ports")"
     echo "  - $(tr_text "保护端口" "protected ports")"
     echo "  - $(tr_text "当前系统已监听 TCP/UDP 端口" "currently listening TCP/UDP ports")"
     echo
@@ -808,18 +746,18 @@ knock_ports_to_arrow() {
 print_firewall_warning() {
     echo
     danger "========================================================================"
-    danger "$(tr_text "警告：完整接管防火墙" "WARNING: FULL FIREWALL TAKEOVER")"
+    danger "$(tr_text "警告：保护端口叠加模式" "WARNING: PROTECTIVE OVERLAY MODE")"
     danger "========================================================================"
-    warn "$(tr_text "本脚本将接管 nftables，并默认丢弃所有入站流量。" "This script will take over nftables and default-drop all inbound traffic.")"
-    warn "$(tr_text "只有当前防火墙规则已经放行的端口会保持常开。" "Only ports already accepted by current firewall rules will stay open.")"
-    warn "$(tr_text "你输入的保护端口只有敲门成功后才会临时开放。" "Protected ports will open only after a successful knock.")"
+    warn "$(tr_text "本脚本不会重写 /etc/nftables.conf，也不会 flush 现有防火墙规则。" "This script will not rewrite /etc/nftables.conf and will not flush existing firewall rules.")"
+    warn "$(tr_text "KnockGate 只创建/替换自己的 table inet knockgate。" "KnockGate only creates/replaces its own table inet knockgate.")"
+    warn "$(tr_text "只有你输入的保护端口会被 KnockGate 预先拦截；其他端口保持原防火墙行为不变。" "Only protected ports are pre-filtered by KnockGate; all other ports keep their existing firewall behavior.")"
     echo
-    warn "$(tr_text "当前 SSH 端口会自动加入 TCP 常开端口。" "The current SSH port is automatically added to always-open TCP ports.")"
-    warn "$(tr_text "如果 SSH 端口检测错误，可能会立刻失联。" "If the SSH port is detected incorrectly, you may lose access immediately.")"
+    warn "$(tr_text "推荐：保护端口应在原防火墙/云安全组中本来可达，由 KnockGate 负责额外挡住未敲门来源。" "Recommended: protected ports should already be reachable in the existing firewall/cloud security group; KnockGate then blocks sources that have not knocked.")"
+    warn "$(tr_text "如果原防火墙本来就丢弃保护端口，敲门后 KnockGate 也不会绕过原防火墙。" "If the existing firewall already drops a protected port, KnockGate will not bypass it after knocking.")"
     echo
     info "$(tr_text "继续前请确认：" "Before continuing, confirm:")"
-    echo "  - $(tr_text "SSH 端口正确；" "the SSH port is correct;")"
-    echo "  - $(tr_text "已检查自动识别出的当前防火墙常开端口；" "you reviewed the auto-detected current-firewall exception ports;")"
+    echo "  - $(tr_text "保护端口填写正确；" "protected ports are correct;")"
+    echo "  - $(tr_text "原防火墙/云安全组没有继续阻断这些保护端口；" "the existing firewall/cloud security group does not still block those protected ports;")"
     echo "  - $(tr_text "如果这是远程服务器，云厂商控制台/救援方式可用。" "if this is remote, provider console/rescue access is available.")"
     danger "========================================================================"
 }
@@ -827,9 +765,7 @@ print_firewall_warning() {
 print_config_summary() {
     echo
     heading "$(tr_text "配置摘要" "Configuration summary")"
-    echo "$(tr_text "模式：完整接管防火墙" "Mode: full firewall takeover")"
-    echo "$(tr_text "TCP 常开端口：" "TCP always-open ports:") ${EXCEPTION_PORTS}"
-    echo "$(tr_text "UDP 常开端口：" "UDP always-open ports:") ${UDP_EXCEPTION_PORTS:-none}"
+    echo "$(tr_text "模式：仅保护端口叠加，不改原防火墙" "Mode: protective overlay, existing firewall unchanged")"
     echo "$(tr_text "需要敲门的保护端口：" "Protected ports requiring knock:") ${PROTECTED_PORTS}"
     echo "$(tr_text "UDP 敲门序列：" "UDP knock sequence:") $(knock_ports_to_arrow "${KNOCK_PORTS}")"
     echo "$(tr_text "开门时长：" "Open timeout:") ${OPEN_TIMEOUT}"
@@ -851,7 +787,7 @@ prompt_port_list() {
             printf '%s\n' "${normalized}"
             return 0
         fi
-        echo "请输入合法 TCP 端口，例如：22,80,443"
+        echo "请输入合法端口，例如：22,80,443"
     done
 }
 
@@ -876,61 +812,26 @@ prompt_optional_port_list() {
 }
 
 prompt_firewall_config() {
-    local overlap
-    local bad_knocks
     local used_ports
     local rolled_knock_ports
+    local bad_knocks
 
     print_firewall_warning
-    detect_exception_defaults
-    print_autodetect_summary
-
-    SSH_PORT="$(prompt_default "当前 SSH 端口" "${SSH_PORT:-${DEFAULT_SSH_PORT}}")"
-    while ! is_port "${SSH_PORT}"; do
-        echo "SSH 端口无效。"
-        SSH_PORT="$(prompt_default "当前 SSH 端口" "${DEFAULT_SSH_PORT}")"
-    done
-
-    EXCEPTION_PORTS="$(join_port_lists "${DETECTED_TCP_EXCEPTION_PORTS}" "${SSH_PORT}")"
-    UDP_EXCEPTION_PORTS="${DETECTED_UDP_EXCEPTION_PORTS:-}"
-
-    echo
-    echo "将使用当前防火墙规则作为常开端口："
-    echo "  TCP: ${EXCEPTION_PORTS:-none}"
-    echo "  UDP: ${UDP_EXCEPTION_PORTS:-none}"
-    echo
-    echo "其他入站流量默认全部丢弃；只有 established/related、loopback、ICMP，或已敲门来源访问保护端口会被放行。"
-    if ! require_upper_yes "确认完整接管防火墙，并将默认入站策略设为 DROP。"; then
-        echo "已取消，未应用任何防火墙变更。"
-        return 1
-    fi
 
     while true; do
         PROTECTED_PORTS="$(prompt_port_list "保护端口，敲门后开放" "${PROTECTED_PORTS:-${DEFAULT_PROTECTED_PORTS}}" "set")"
-        overlap="$(overlap_ports "${EXCEPTION_PORTS}" "${PROTECTED_PORTS}")"
-        if [[ -n "${overlap}" ]]; then
-            echo
-            echo "端口冲突： ${overlap}"
-            echo "同一端口如果既是常开端口又是保护端口，会因常开规则优先而永久开放。"
-            if ! confirm_yes_no "继续保留这个冲突" "no"; then
-                echo "请重新输入保护端口。"
-                continue
-            fi
-        fi
 
-        used_ports="$(join_port_lists "${EXCEPTION_PORTS}" "${UDP_EXCEPTION_PORTS}" "${PROTECTED_PORTS}" "$(detect_listening_ports_all || true)")"
+        used_ports="$(join_port_lists "$(detect_nft_accept_ports tcp || true)" "$(detect_nft_accept_ports udp || true)" "${PROTECTED_PORTS}" "$(detect_listening_ports_all || true)")"
         rolled_knock_ports="$(roll_knock_ports "${used_ports}")"
         KNOCK_PORTS="${rolled_knock_ports}"
         print_rolled_knock_summary "${used_ports}"
 
         while true; do
             KNOCK_PORTS="$(prompt_port_list "敲门序列端口" "${KNOCK_PORTS}" "sequence")"
-            bad_knocks="$(overlap_ports "${KNOCK_PORTS}" "$(join_port_lists "${EXCEPTION_PORTS}" "${UDP_EXCEPTION_PORTS}")")"
-            overlap="$(overlap_ports "${KNOCK_PORTS}" "${PROTECTED_PORTS}")"
-            if [[ -n "${bad_knocks}" || -n "${overlap}" ]]; then
-                echo "敲门端口不能和常开端口或保护端口重复。"
-                [[ -n "${bad_knocks}" ]] && echo "与常开端口重复： ${bad_knocks}"
-                [[ -n "${overlap}" ]] && echo "与保护端口重复： ${overlap}"
+            bad_knocks="$(overlap_ports "${KNOCK_PORTS}" "${used_ports}")"
+            if [[ -n "${bad_knocks}" ]]; then
+                echo "敲门端口不应和保护端口、已监听端口或现有防火墙 accept 端口重复。"
+                echo "重复端口： ${bad_knocks}"
                 echo "请重新输入敲门序列端口。"
                 continue
             fi
@@ -952,7 +853,7 @@ prompt_firewall_config() {
         detect_interface
         print_config_summary
 
-        if require_upper_yes "应用此配置将重写 ${NFT_CONF} 并加载默认丢弃入站流量的防火墙。"; then
+        if require_upper_yes "应用此配置将只替换 KnockGate 自己的 nft table，不改原防火墙。"; then
             break
         fi
 
@@ -961,24 +862,16 @@ prompt_firewall_config() {
     done
 }
 
-render_nft_full_takeover() {
+render_nft_overlay() {
     local output="$1"
-    local exception_expr
-    local udp_exception_expr
     local protected_expr
 
-    exception_expr="$(ports_to_nft_set "${EXCEPTION_PORTS}")"
     protected_expr="$(ports_to_nft_set "${PROTECTED_PORTS}")"
-    if [[ -n "${UDP_EXCEPTION_PORTS}" ]]; then
-        udp_exception_expr="$(ports_to_nft_set "${UDP_EXCEPTION_PORTS}")"
-    fi
 
     cat > "${output}" <<EOF
 #!${NFT_BIN} -f
 
-# 由 KnockGate 管理。手动修改可能会被覆盖。
-
-flush ruleset
+# 由 KnockGate 管理。只包含 KnockGate 自己的保护表，不修改其他防火墙规则。
 
 table ${NFT_TABLE_FAMILY} ${NFT_TABLE_NAME} {
     set ${NFT_SET_NAME} {
@@ -987,29 +880,13 @@ table ${NFT_TABLE_FAMILY} ${NFT_TABLE_NAME} {
     }
 
     chain input {
-        type filter hook input priority filter; policy drop;
+        type filter hook input priority -150; policy accept;
 
-        iif lo accept
-        ct state established,related accept
-
-        ip protocol icmp accept
-
-        # 常开端口。
-        tcp dport ${exception_expr} accept
-EOF
-
-    if [[ -n "${UDP_EXCEPTION_PORTS}" ]]; then
-        cat >> "${output}" <<EOF
-        udp dport ${udp_exception_expr} accept
-EOF
-    fi
-
-    cat >> "${output}" <<EOF
-
-        # 保护端口，仅对敲门成功的来源开放。
+        # 保护端口：敲门成功来源放行；其他来源丢弃。
         ip saddr @${NFT_SET_NAME} tcp dport ${protected_expr} accept
+        tcp dport ${protected_expr} drop
 
-        # 其他流量由链默认策略丢弃。
+        # 其他流量不处理，交给原有防火墙。
     }
 }
 EOF
@@ -1017,28 +894,35 @@ EOF
 
 apply_nft() {
     local tmp
+    local check_tmp
 
     refresh_binaries
     tmp="$(mktemp)"
-    render_nft_full_takeover "${tmp}"
+    check_tmp="$(mktemp)"
+    render_nft_overlay "${tmp}"
 
-    log "正在检查生成的 nftables 配置。"
-    "${NFT_BIN}" -c -f "${tmp}"
+    log "正在检查生成的 KnockGate nftables 配置。"
+    {
+        if "${NFT_BIN}" list table "${NFT_TABLE_FAMILY}" "${NFT_TABLE_NAME}" >/dev/null 2>&1; then
+            echo "delete table ${NFT_TABLE_FAMILY} ${NFT_TABLE_NAME}"
+        fi
+        cat "${tmp}"
+    } > "${check_tmp}"
+    "${NFT_BIN}" -c -f "${check_tmp}"
+    rm -f "${check_tmp}"
 
-    backup_live_ruleset
-    backup_file "${NFT_CONF}"
-    cp "${tmp}" "${NFT_CONF}"
-    chmod 600 "${NFT_CONF}"
+    backup_file "${KNOCKGATE_NFT_CONF}"
+    cp "${tmp}" "${KNOCKGATE_NFT_CONF}"
+    chmod 600 "${KNOCKGATE_NFT_CONF}"
+
+    log "正在替换 KnockGate 自己的 nft table；其他防火墙规则保持不变。"
+    if "${NFT_BIN}" list table "${NFT_TABLE_FAMILY}" "${NFT_TABLE_NAME}" >/dev/null 2>&1; then
+        "${NFT_BIN}" delete table "${NFT_TABLE_FAMILY}" "${NFT_TABLE_NAME}"
+    fi
+    "${NFT_BIN}" -f "${KNOCKGATE_NFT_CONF}"
     rm -f "${tmp}"
 
-    log "正在加载 ${NFT_CONF}，现有 nftables 规则集会被替换。"
-    "${NFT_BIN}" -f "${NFT_CONF}"
-
-    if systemctl list-unit-files nftables.service >/dev/null 2>&1; then
-        systemctl enable nftables >/dev/null 2>&1 || true
-    fi
-
-    log "nftables 配置已应用。"
+    log "KnockGate nftables 保护表已应用。"
 }
 
 render_knockd_conf() {
@@ -1085,6 +969,10 @@ EOF
     mkdir -p "${KNOCKD_OVERRIDE_DIR}"
     backup_file "${KNOCKD_OVERRIDE_CONF}"
     cat > "${KNOCKD_OVERRIDE_CONF}" <<EOF
+[Unit]
+Wants=knockgate-nft.service
+After=knockgate-nft.service
+
 [Service]
 ExecStart=
 ExecStart=${KNOCKD_BIN} -4 -i ${INTERFACE} -c ${KNOCKD_CONF}
@@ -1093,6 +981,32 @@ EOF
     log "已写入 ${KNOCKD_OVERRIDE_CONF}"
 
     systemctl daemon-reload
+}
+
+configure_knockgate_nft_service() {
+    refresh_binaries
+
+    backup_file "${KNOCKGATE_NFT_SERVICE}"
+    cat > "${KNOCKGATE_NFT_SERVICE}" <<EOF
+[Unit]
+Description=KnockGate nftables protective overlay
+Documentation=https://github.com/leconio/knockport
+Before=knockd.service
+
+[Service]
+Type=oneshot
+ExecStartPre=-${NFT_BIN} delete table ${NFT_TABLE_FAMILY} ${NFT_TABLE_NAME}
+ExecStart=${NFT_BIN} -f ${KNOCKGATE_NFT_CONF}
+ExecStop=-${NFT_BIN} delete table ${NFT_TABLE_FAMILY} ${NFT_TABLE_NAME}
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    chmod 644 "${KNOCKGATE_NFT_SERVICE}"
+    systemctl daemon-reload
+    systemctl enable knockgate-nft.service >/dev/null 2>&1 || true
+    log "已写入并启用 ${KNOCKGATE_NFT_SERVICE}"
 }
 
 restart_services() {
@@ -1123,13 +1037,13 @@ write_readme() {
 KnockGate
 =========
 
-KnockGate 使用 knockd 和 nftables 实现顺序 TCP 端口敲门。
+KnockGate 使用 knockd 和 nftables 实现顺序 UDP 端口敲门。
 
 Paths:
   Manager command: ${INSTALL_PATH}
   Config file:     ${CONFIG_FILE}
   Backup dir:      ${BACKUP_DIR}
-  nftables config: ${NFT_CONF}
+  KnockGate nft:   ${KNOCKGATE_NFT_CONF}
   knockd config:   ${KNOCKD_CONF}
 
 常用命令：
@@ -1139,9 +1053,8 @@ Paths:
   查看规则：
     nft list table ${NFT_TABLE_FAMILY} ${NFT_TABLE_NAME}
 
-  恢复防火墙备份：
-    sudo knockgate
-    请选择：恢复防火墙备份
+  重新加载 KnockGate 保护表：
+    systemctl restart knockgate-nft.service
 
 安全提醒：
   传统端口敲门可能被路径上的观察者重放。
@@ -1155,8 +1068,6 @@ print_completion_info() {
 
 安装/修复完成。
 
-当前 TCP 常开端口： ${EXCEPTION_PORTS}
-当前 UDP 常开端口： ${UDP_EXCEPTION_PORTS:-none}
 当前保护端口： ${PROTECTED_PORTS}
 当前 UDP 敲门序列： ${KNOCK_PORTS}
 开门时长： ${OPEN_TIMEOUT}
@@ -1180,15 +1091,15 @@ EOF
 查看规则：
   nft list table ${NFT_TABLE_FAMILY} ${NFT_TABLE_NAME}
 
-恢复备份：
-  sudo knockgate -> 恢复防火墙备份
+重新加载 KnockGate 保护表：
+  systemctl restart knockgate-nft.service
 
 安全提醒：
   传统端口敲门可能被路径上的观察者重放。
   它适合阻挡普通公网扫描，不是强认证机制。
 
 首次部署检查：
-  - 确认 SSH 端口在常开端口中。
+  - 确认原防火墙/云安全组允许保护端口的合法流量通过。
   - 确认云厂商控制台/救援方式可用。
 
 EOF
@@ -1205,6 +1116,7 @@ install_or_repair() {
 
     save_config
     apply_nft
+    configure_knockgate_nft_service
     render_knockd_conf
     configure_knockd_service
     restart_services
@@ -1226,13 +1138,14 @@ update_config() {
     print_firewall_warning
     detect_interface
     print_config_summary
-    if ! require_upper_yes "更新配置将重写 ${NFT_CONF}, 重新加载 nftables，并重启 knockd。"; then
+    if ! require_upper_yes "更新配置将只替换 KnockGate 保护表，并重启 knockd。"; then
         echo "已取消。"
         return 0
     fi
 
     save_config
     apply_nft
+    configure_knockgate_nft_service
     render_knockd_conf
     configure_knockd_service
     restart_services
@@ -1251,6 +1164,7 @@ reset_ports() {
 
     save_config
     apply_nft
+    configure_knockgate_nft_service
     render_knockd_conf
     configure_knockd_service
     restart_services
@@ -1483,124 +1397,37 @@ restore_selected_backup() {
     log "已恢复 ${selected} -> ${target}"
 }
 
-restore_firewall_backup() {
+reload_knockgate_rules() {
     require_root
+    load_config
     refresh_binaries
+    local check_tmp
 
-    echo
-    echo "1. 恢复 ${NFT_CONF} 备份"
-    echo "2. 恢复 live nft 规则集备份"
-    echo "3. 取消"
-    local choice
-    read -r -p "请选择： " choice
-
-    case "${choice}" in
-        1)
-            if restore_selected_backup "${NFT_CONF}"; then
-                log "正在检查恢复后的 nftables 配置。"
-                "${NFT_BIN}" -c -f "${NFT_CONF}"
-                log "Loading restored nftables config."
-                "${NFT_BIN}" -f "${NFT_CONF}"
-                log "防火墙配置备份已恢复。"
-            fi
-            ;;
-        2)
-            restore_live_ruleset_backup
-            ;;
-        *)
-            echo "已取消。"
-            ;;
-    esac
-}
-
-restore_live_ruleset_backup() {
-    local -a backups=()
-    local item
-    local idx
-    local selected
-    local tmp
-
-    shopt -s nullglob
-    for item in "${BACKUP_DIR}"/ruleset.*.nft; do
-        backups+=("${item}")
-    done
-    shopt -u nullglob
-
-    if [[ "${#backups[@]}" -eq 0 ]]; then
-        echo "未找到 live 规则集备份。"
-        return 1
+    if [[ ! -r "${KNOCKGATE_NFT_CONF}" ]]; then
+        warn "$(tr_text "未找到 KnockGate nft 配置，请先安装/修复。" "KnockGate nft config not found; run Install / Repair first.")"
+        return 0
     fi
 
-    IFS=$'\n' backups=($(sort <<<"${backups[*]}"))
-    unset IFS
-
-    echo
-    echo "可用 live 规则集备份："
-    idx=1
-    for item in "${backups[@]}"; do
-        echo "  ${idx}. ${item}"
-        idx=$((idx + 1))
-    done
-    echo "  0. Cancel"
-
-    read -r -p "选择备份编号： " idx
-    if ! is_uint "${idx}" || (( idx < 0 || idx > ${#backups[@]} )); then
-        echo "无效选择。"
-        return 1
-    fi
-    if (( idx == 0 )); then
-        echo "已取消。"
-        return 1
+    if ! require_upper_yes "$(tr_text "这将只重载 KnockGate 自己的 nft 保护表，原防火墙不变。" "This will reload only KnockGate's nft protective table; existing firewall remains unchanged.")"; then
+        warn "$(tr_text "已取消。" "Cancelled.")"
+        return 0
     fi
 
-    selected="${backups[$((idx - 1))]}"
-    echo "已选择： ${selected}"
-    if ! require_upper_yes "恢复这个 live nft 规则集备份。"; then
-        echo "已取消。"
-        return 1
-    fi
-
-    backup_live_ruleset
-    log "正在检查选中的 live 规则集备份。"
-    tmp="$(mktemp)"
-    if grep -Eq '^[[:space:]]*flush[[:space:]]+ruleset([[:space:]]|$)' "${selected}"; then
-        cp "${selected}" "${tmp}"
-    else
-        {
-            echo "flush ruleset"
-            cat "${selected}"
-        } > "${tmp}"
-    fi
-    if ! "${NFT_BIN}" -c -f "${tmp}"; then
-        rm -f "${tmp}"
-        if grep -q "ufw-" "${selected}" && command -v ufw >/dev/null 2>&1; then
-            echo
-            echo "此备份似乎包含 UFW/iptables-nft 兼容规则。"
-            echo "这些规则不一定能直接用 nft 回放。"
-            echo "如果原始 UFW 配置文件仍存在，可以让 UFW 重建 live 防火墙。"
-            if confirm_yes_no "现在运行 ufw --force reload" "yes"; then
-                "${NFT_BIN}" flush ruleset
-                ufw --force reload
-                log "已从现有 UFW 配置重新加载防火墙。"
-                return 0
-            fi
+    check_tmp="$(mktemp)"
+    {
+        if "${NFT_BIN}" list table "${NFT_TABLE_FAMILY}" "${NFT_TABLE_NAME}" >/dev/null 2>&1; then
+            echo "delete table ${NFT_TABLE_FAMILY} ${NFT_TABLE_NAME}"
         fi
-        return 1
+        cat "${KNOCKGATE_NFT_CONF}"
+    } > "${check_tmp}"
+    "${NFT_BIN}" -c -f "${check_tmp}"
+    rm -f "${check_tmp}"
+    if "${NFT_BIN}" list table "${NFT_TABLE_FAMILY}" "${NFT_TABLE_NAME}" >/dev/null 2>&1; then
+        "${NFT_BIN}" delete table "${NFT_TABLE_FAMILY}" "${NFT_TABLE_NAME}"
     fi
-    log "正在加载选中的 live 规则集备份。"
-    "${NFT_BIN}" -f "${tmp}"
-    rm -f "${tmp}"
-    log "live 规则集备份已恢复。"
-}
-
-restore_firewall_config_backup_noninteractive() {
-    if restore_selected_backup "${NFT_CONF}"; then
-        log "正在检查恢复后的 nftables 配置。"
-        "${NFT_BIN}" -c -f "${NFT_CONF}"
-        log "Loading restored nftables config."
-        "${NFT_BIN}" -f "${NFT_CONF}"
-        log "防火墙配置备份已恢复。"
-    fi
+    "${NFT_BIN}" -f "${KNOCKGATE_NFT_CONF}"
+    systemctl restart knockgate-nft.service >/dev/null 2>&1 || true
+    log "KnockGate 保护表已重载。"
 }
 
 url_encode() {
@@ -1719,13 +1546,24 @@ uninstall() {
     systemctl disable knockd >/dev/null 2>&1 || true
     log "knockd stopped and disabled if present."
 
-    if confirm_yes_no "现在恢复 nftables.conf 备份" "yes"; then
-        restore_firewall_backup || true
-    else
-        if confirm_yes_no "删除 live nft 表 ${NFT_TABLE_FAMILY} ${NFT_TABLE_NAME}" "no"; then
-            "${NFT_BIN}" delete table "${NFT_TABLE_FAMILY}" "${NFT_TABLE_NAME}" || true
-            log "已删除 live nft 表 ${NFT_TABLE_FAMILY} ${NFT_TABLE_NAME}（如果存在）。"
-        fi
+    systemctl stop knockgate-nft.service >/dev/null 2>&1 || true
+    systemctl disable knockgate-nft.service >/dev/null 2>&1 || true
+    if confirm_yes_no "删除 KnockGate live nft 表 ${NFT_TABLE_FAMILY} ${NFT_TABLE_NAME}" "yes"; then
+        "${NFT_BIN}" delete table "${NFT_TABLE_FAMILY}" "${NFT_TABLE_NAME}" || true
+        log "已删除 live nft 表 ${NFT_TABLE_FAMILY} ${NFT_TABLE_NAME}（如果存在）。"
+    fi
+
+    if [[ -e "${KNOCKGATE_NFT_SERVICE}" ]] && confirm_yes_no "删除 ${KNOCKGATE_NFT_SERVICE}" "yes"; then
+        backup_file "${KNOCKGATE_NFT_SERVICE}"
+        rm -f "${KNOCKGATE_NFT_SERVICE}"
+        systemctl daemon-reload
+        log "已删除 ${KNOCKGATE_NFT_SERVICE}。"
+    fi
+
+    if [[ -e "${KNOCKGATE_NFT_CONF}" ]] && confirm_yes_no "删除 ${KNOCKGATE_NFT_CONF}" "yes"; then
+        backup_file "${KNOCKGATE_NFT_CONF}"
+        rm -f "${KNOCKGATE_NFT_CONF}"
+        log "已删除 ${KNOCKGATE_NFT_CONF}。"
     fi
 
     if confirm_yes_no "恢复 knockd.conf 备份" "no"; then
@@ -1782,7 +1620,7 @@ main_menu() {
         echo "$(color_text "${COLOR_BLUE}" "6.") $(tr_text "查看临时白名单" "Show temporary allowlist")"
         echo "$(color_text "${COLOR_BLUE}" "7.") $(tr_text "添加 IP 到临时白名单" "Add IP to allowlist")"
         echo "$(color_text "${COLOR_BLUE}" "8.") $(tr_text "清空临时白名单" "Flush allowlist")"
-        echo "$(color_text "${COLOR_BLUE}" "9.") $(tr_text "恢复防火墙备份" "Restore firewall backup")"
+        echo "$(color_text "${COLOR_BLUE}" "9.") $(tr_text "重载 KnockGate 保护表" "Reload KnockGate rules")"
         echo "$(color_text "${COLOR_BLUE}" "10.") $(tr_text "卸载" "Uninstall")"
         echo "$(color_text "${COLOR_BLUE}" "11.") $(tr_text "生成客户端导入二维码" "Generate client import QR")"
         echo "$(color_text "${COLOR_BLUE}" "12.") $(tr_text "退出" "Exit")"
@@ -1798,7 +1636,7 @@ main_menu() {
             6) show_allowlist ;;
             7) add_ip_allowlist ;;
             8) flush_allowlist ;;
-            9) restore_firewall_backup ;;
+            9) reload_knockgate_rules ;;
             10) uninstall ;;
             11) show_client_import_qr ;;
             12) exit 0 ;;

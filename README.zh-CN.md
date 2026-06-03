@@ -6,22 +6,13 @@
 
 KnockGate 用 `knockd` 监听 UDP 顺序端口敲门，用 `nftables` timeout set 临时放行来源 IP。
 
-它的安全模型是：
-
-- 接管入站防火墙规则；
-- 默认丢弃所有入站流量；
-- 保留当前防火墙已经放行的端口；
-- 自动保留当前 SSH 端口，降低锁机风险；
-- 用户指定保护端口，保护端口默认关闭；
-- 敲门成功后，把来源 IP 加入 `nftables` set；
-- 该 IP 可访问所有保护端口，直到超时过期；
-- 也支持手动永久放行 IP，但会有显著警告和二次确认。
+它不会接管你原来的防火墙。它只创建自己的 `table inet knockgate`，并且只预先过滤你指定的保护 TCP 端口。其他端口继续保持原防火墙、云安全组和服务本身的行为。
 
 这不是 VPN、代理、隧道或强认证系统。传统端口敲门可能被路径上的观察者重放，它适合减少普通公网扫描暴露，不应替代 SSH key、TLS、应用认证、VPN 或零信任访问控制。
 
 ## 工作原理
 
-KnockGate 生成完整 `nftables` 入站规则：
+KnockGate 安装一个叠加保护层：
 
 ```nft
 table inet knockgate {
@@ -31,19 +22,40 @@ table inet knockgate {
     }
 
     chain input {
-        type filter hook input priority filter; policy drop;
+        type filter hook input priority -150; policy accept;
 
-        iif lo accept
-        ct state established,related accept
-        ip protocol icmp accept
-
-        tcp dport { 当前防火墙已放行的 TCP 端口 } accept
-        ip saddr @knock_allow_temp_v4 tcp dport { 保护端口 } accept
+        ip saddr @knock_allow_temp_v4 tcp dport { PROTECTED_PORTS } accept
+        tcp dport { PROTECTED_PORTS } drop
     }
 }
 ```
 
-敲门端口本身不需要在防火墙中开放。`knockd` 通过抓包看到 UDP 包，所以敲门端口不需要有服务监听。
+UDP 敲门端口不在 `nftables` 中开放；`knockd` 通过抓包观察 UDP 包。
+
+关键行为：
+
+- 保护 TCP 端口默认被 KnockGate 丢弃；
+- UDP 敲门成功后，来源 IP 被加入临时白名单；
+- 其他流量不由 KnockGate 修改；
+- 不重写 `/etc/nftables.conf`；
+- 原防火墙规则和云安全组仍然生效。
+
+## 推荐配置指南
+
+把 KnockGate 当作已有防火墙前面的一层额外保护：
+
+- SSH、Web、VPN 等公开端口继续由你原来的防火墙或云安全组管理；
+- 保护服务端口应在原防火墙里本来可达，然后由 KnockGate 对未知来源隐藏；
+- 不要在原防火墙里继续阻断保护端口，否则敲门后 KnockGate 也无法绕过原防火墙；
+- UDP 敲门包必须能到达服务器路径。主机 `nftables` 不需要放行敲门端口，但云厂商防火墙不能在包到主机前就拦掉；
+- 使用随机高位 UDP 敲门端口，并把导入二维码当作敏感信息保存。
+
+例子：
+
+- 原防火墙允许 SSH `22` 和应用端口 `5432`；
+- KnockGate 保护 `5432`；
+- 敲门前：`5432` 被 KnockGate 丢弃；
+- 敲门后：客户端 IP 可以访问 `5432`，前提是原防火墙仍允许它通过。
 
 ## 环境要求
 
@@ -66,24 +78,25 @@ table inet knockgate {
 - `iproute2`
 - `qrencode`
 
-脚本会在支持的发行版上尝试安装缺失依赖。如果找不到 `knockd` 包，会明确报错并停止。`qrencode` 用于在终端生成客户端导入二维码。
+脚本会在支持的发行版上尝试安装缺失依赖。`qrencode` 用于在终端生成客户端导入二维码。
 
 ## 文件
 
 仓库文件：
 
 - `knockgate.sh`：服务端安装和管理脚本
-- `rfcjp-knock.sh`：通用客户端敲门脚本
-- `rfcjp-check.sh`：通用客户端 TCP 连通性检查脚本
+- `rfcjp-knock.sh`：客户端 UDP 敲门脚本
+- `rfcjp-check.sh`：客户端 TCP 连通性检查脚本
 
 安装后的服务端路径：
 
 - `/usr/local/bin/knockgate`
 - `/etc/knockgate/knockgate.conf`
+- `/etc/knockgate/knockgate.nft`
 - `/etc/knockgate/backups`
 - `/etc/knockgate/README`
-- `/etc/nftables.conf`
 - `/etc/knockd.conf`
+- `/etc/systemd/system/knockgate-nft.service`
 - `/etc/systemd/system/knockd.service.d/override.conf`
 
 ## 安装
@@ -101,24 +114,10 @@ sudo ./knockgate.sh
 sudo knockgate
 ```
 
-提交到 GitHub 后的一键安装命令模板：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/knockgate.sh -o /tmp/knockgate.sh \
-  && chmod +x /tmp/knockgate.sh \
-  && sudo /tmp/knockgate.sh
-```
-
-使用安装器脚本：
+一键安装：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh | sudo KNOCKGATE_REPO=leconio/knockport bash
-```
-
-安装器默认只安装服务端管理命令：
-
-```text
-/usr/local/bin/knockgate
 ```
 
 客户端辅助脚本默认不会装到服务器。如需在客户端机器安装：
@@ -126,46 +125,6 @@ curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh |
 ```bash
 curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh | sudo KNOCKGATE_REPO=leconio/knockport INSTALL_CLIENT_HELPERS=1 bash
 ```
-
-Fork 或自建 raw 文件地址时：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/install.sh | sudo KNOCKGATE_RAW_BASE=https://raw.githubusercontent.com/OWNER/REPO/main bash
-```
-
-## 首次运行
-
-启动时会先选择语言：
-
-```text
-1. 中文
-2. English
-```
-
-也可以通过环境变量跳过语言选择：
-
-```bash
-sudo KNOCKGATE_LANG=zh knockgate
-sudo KNOCKGATE_LANG=en knockgate
-```
-
-安装或重置时，KnockGate 会：
-
-1. 检测当前 SSH 端口；
-2. 读取当前防火墙中的 `accept` 规则；
-3. 保留当前已放行的 TCP/UDP 端口；
-4. 要求用户确认默认入站策略将变成 `DROP`；
-5. 让用户输入保护端口；
-6. 自动随机生成 6 个敲门端口；
-7. 展示最终配置摘要；
-8. 要求输入大写 `YES` 才真正应用。
-
-随机敲门端口会避开：
-
-- 当前防火墙常开 TCP/UDP 端口；
-- 用户输入的保护端口；
-- 当前系统已监听 TCP/UDP 端口；
-- 敲门序列内部重复端口。
 
 ## 菜单
 
@@ -180,68 +139,29 @@ KnockGate 管理器
 6. 查看临时白名单
 7. 添加 IP 到临时白名单
 8. 清空临时白名单
-9. 恢复防火墙备份
+9. 重载 KnockGate 保护表
 10. 卸载
 11. 生成客户端导入二维码
 12. 退出
 ```
 
-危险操作都会要求确认。应用防火墙、恢复备份、卸载、清空白名单、永久放行 IP 都需要显式确认。
+## 客户端开锁
 
-## 客户端如何开锁
-
-KnockGate 使用 UDP 敲门序列。客户端必须按服务器显示的顺序，对每个敲门端口发送一个 UDP datagram。
-
-规则：
-
-- 使用 UDP；
-- 严格按顺序敲；
-- 不要跳过端口；
-- 不要乱序；
-- 不要在序列中插入其他敲门端口；
-- 必须在 `SEQ_TIMEOUT` 内完成整组序列；
-- 建议端口之间间隔 `0.2s` 到 `0.5s`；
-- 成功后，客户端来源 IP 会加入临时白名单；
-- 该来源 IP 可访问所有保护端口，直到 `OPEN_TIMEOUT` 过期。
-
-示例服务端摘要：
-
-```text
-敲门序列：38127 -> 19452 -> 47219 -> 26083 -> 50001 -> 50002
-序列超时：10s
-开门时长：12h
-保护端口：5432,9092
-```
-
-使用仓库里的客户端脚本：
+按 `knockgate` 显示的顺序发送 UDP 敲门：
 
 ```bash
 ./rfcjp-knock.sh SERVER_IP 38127 19452 47219 26083 50001 50002
 ```
 
-UDP 敲门不需要 root 权限。需要时可以调整每个 UDP 包之间的间隔：
-
-```bash
-./rfcjp-knock.sh --delay 0.5 SERVER_IP 38127 19452 47219 26083 50001 50002
-```
-
-等价的手动 UDP 命令：
+等价手动命令：
 
 ```bash
 printf knockgate | nc -u -w1 SERVER_IP 38127 || true
 sleep 0.25
 printf knockgate | nc -u -w1 SERVER_IP 19452 || true
-sleep 0.25
-printf knockgate | nc -u -w1 SERVER_IP 47219 || true
-sleep 0.25
-printf knockgate | nc -u -w1 SERVER_IP 26083 || true
-sleep 0.25
-printf knockgate | nc -u -w1 SERVER_IP 50001 || true
-sleep 0.25
-printf knockgate | nc -u -w1 SERVER_IP 50002 || true
 ```
 
-敲门后测试保护端口：
+敲门后检查保护 TCP 端口：
 
 ```bash
 ./rfcjp-check.sh SERVER_IP 5432
@@ -249,23 +169,13 @@ printf knockgate | nc -u -w1 SERVER_IP 50002 || true
 
 结果含义：
 
-- `OPEN`：防火墙已放行，且端口上有服务监听；
-- `REFUSED`：防火墙已放行，但端口上没有服务监听；
-- `FILTERED/TIMEOUT`：敲门没有成功放行，或网络路径在过滤。
-
-如果失败，请检查：
-
-- 端口顺序是否完全正确；
-- 是否在 `SEQ_TIMEOUT` 内完成；
-- 敲门和访问保护端口是否来自同一个公网来源 IP；
-- 是否有代理、VPN、NAT 改变来源 IP；
-- `knockd` 是否监听了正确网卡。
-
-如果本机代理、VPN 或 TUN 设备拦截了 UDP 流量，敲门包可能根本不会到服务器。这种情况下客户端脚本会执行完，但服务器白名单仍然为空。请使用干净网络路径、给服务器 IP 设置代理绕过，或换一台客户端主机测试。
+- `OPEN`：防火墙已放行，且有服务监听；
+- `REFUSED`：路径已打开，但没有服务监听；
+- `FILTERED`：仍被阻断，或网络路径过滤。
 
 ## 客户端导入 URL
 
-菜单第 11 项会生成二维码，并在二维码下方显示协议 URL。URL 使用 KnockGate 专用协议，供未来客户端 App 一键导入：
+菜单第 11 项会生成二维码，并在二维码下方显示协议 URL：
 
 ```text
 knockgate://import/v1?host=SERVER_IP&scheme=udp&knock_ports=38127%2C19452%2C47219&protected_ports=5432&seq_timeout=10&open_timeout=12h&label=KnockGate
@@ -273,127 +183,20 @@ knockgate://import/v1?host=SERVER_IP&scheme=udp&knock_ports=38127%2C19452%2C4721
 
 二维码包含 UDP 敲门顺序，请把它当作敏感信息，只分享给可信客户端。
 
-## 客户端辅助脚本
-
-敲门：
-
-```bash
-./rfcjp-knock.sh SERVER_IP PORT1 PORT2 PORT3 PORT4 PORT5 PORT6
-```
-
-只检查连通性，不敲门：
-
-```bash
-./rfcjp-check.sh SERVER_IP
-```
-
-检查指定 TCP 端口：
-
-```bash
-./rfcjp-check.sh SERVER_IP 22 80 443 5432
-```
-
-连通性检查有硬超时，默认 `3s`。需要时可以覆盖：
-
-```bash
-./rfcjp-check.sh --timeout 5 SERVER_IP 5432
-CHECK_TIMEOUT=5 ./rfcjp-check.sh SERVER_IP 5432
-```
-
-覆盖默认检查端口：
-
-```bash
-SSH_PORT=2222 PROTECTED_PORT=5432 ORDINARY_PORT=15555 ./rfcjp-check.sh SERVER_IP
-```
-
-典型测试流程：
-
-```bash
-./rfcjp-check.sh SERVER_IP
-./rfcjp-knock.sh SERVER_IP PORT1 PORT2 PORT3 PORT4 PORT5 PORT6
-./rfcjp-check.sh SERVER_IP
-```
-
-## 手动白名单
-
-菜单 `7` 可以手动放行 IP。
-
-支持时长：
-
-- `30s`
-- `10m`
-- `12h`
-- `1d`
-- `0` 表示永久放行
-
-永久放行不会自动过期。KnockGate 会显示警告，并要求输入大写 `YES` 才会添加永久放行。
-
-菜单 `6` 会显示：
-
-- 放行 IP；
-- 可访问的保护端口；
-- 剩余时间；
-- 原始 `nftables` set 输出。
-
-## 备份和恢复
-
-写入重要文件前，KnockGate 会在这里创建时间戳备份：
-
-```text
-/etc/knockgate/backups
-```
-
-备份内容包括：
-
-- `/etc/nftables.conf`
-- `/etc/knockd.conf`
-- `/etc/default/knockd`
-- systemd override
-- live `nft list ruleset`
-
-如果备份里包含 UFW 或 iptables-nft 兼容规则，直接 `nft -f` 可能失败。KnockGate 会在检测到 UFW 且配置存在时回退到：
-
-```bash
-nft flush ruleset
-ufw --force reload
-```
-
 ## 卸载
-
-运行：
-
-```bash
-sudo knockgate
-```
-
-选择：
-
-```text
-10. 卸载
-```
 
 卸载流程可以：
 
 - 停止并禁用 `knockd`；
+- 停止并禁用 `knockgate-nft.service`；
 - 删除 live `inet knockgate` nft 表；
-- 恢复 `nftables.conf` 备份；
-- 恢复 `knockd.conf` 备份；
-- 删除 systemd override；
+- 删除 KnockGate 自己的 nft 配置和 systemd 文件；
+- 按需恢复 `knockd.conf` 备份；
 - 删除 `/usr/local/bin/knockgate`；
 - 可选删除 `/etc/knockgate`。
 
-## 安全提醒
-
-- 应用前必须确认 SSH 仍然常开；
-- 远程服务器请确保云厂商控制台/救援方式可用；
-- 防火墙接管会重写 `/etc/nftables.conf`；
-- 默认入站策略是 `DROP`；
-- 敲门端口不在 nftables 里开放，`knockd` 通过抓包观察 UDP 包；
-- 当前版本以 IPv4 为主；
-- 不要把端口敲门当作强认证机制。
+它不会恢复或重写 `/etc/nftables.conf`，因为 KnockGate 不修改这个文件。
 
 ## 协议
 
 MIT License。详见 [LICENSE](LICENSE)。
-
----

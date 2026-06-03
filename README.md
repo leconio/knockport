@@ -6,22 +6,13 @@
 
 KnockGate uses `knockd` to watch a sequential UDP knock sequence and uses an `nftables` timeout set to temporarily allow the source IP.
 
-Its security model:
-
-- take over inbound firewall rules;
-- default-drop inbound traffic;
-- keep ports already accepted by the current firewall open;
-- automatically keep the current SSH port open;
-- close protected ports by default;
-- add successful knock source IPs to an `nftables` set;
-- allow that source IP to access all protected ports until timeout;
-- optionally allow an IP permanently, with warning and explicit confirmation.
+It does not take over your existing firewall. It only creates its own `table inet knockgate` and pre-filters the protected TCP ports you choose. All other ports keep the behavior of your current firewall, cloud security group, and services.
 
 This is not a VPN, proxy, tunnel, or strong authentication system. Traditional port knocking can be observed and replayed by an on-path attacker. It helps reduce exposure to ordinary public scanning; it should not replace SSH keys, TLS, application authentication, VPN, or zero-trust access controls.
 
 ## How It Works
 
-KnockGate generates a full `nftables` inbound firewall:
+KnockGate installs a protective overlay:
 
 ```nft
 table inet knockgate {
@@ -31,19 +22,40 @@ table inet knockgate {
     }
 
     chain input {
-        type filter hook input priority filter; policy drop;
+        type filter hook input priority -150; policy accept;
 
-        iif lo accept
-        ct state established,related accept
-        ip protocol icmp accept
-
-        tcp dport { CURRENT_FIREWALL_TCP_PORTS } accept
         ip saddr @knock_allow_temp_v4 tcp dport { PROTECTED_PORTS } accept
+        tcp dport { PROTECTED_PORTS } drop
     }
 }
 ```
 
-The knock ports themselves are not opened in the firewall. `knockd` sees UDP packets through packet capture, so the knock ports do not need services listening on them.
+The UDP knock ports are not opened in `nftables`; `knockd` observes UDP packets through packet capture.
+
+Important behavior:
+
+- Protected TCP ports are dropped unless the source IP is in the temporary allowlist.
+- Successful UDP knocks add the source IP to the allowlist.
+- Other traffic is not changed by KnockGate.
+- `/etc/nftables.conf` is not rewritten.
+- Existing firewall rules and cloud security groups still apply.
+
+## Recommended Configuration
+
+Use KnockGate as an extra protective layer in front of ports that are otherwise reachable:
+
+- Keep SSH, web, VPN, and other public ports managed by your existing firewall or cloud security group.
+- Make the protected service port reachable in your existing firewall, then let KnockGate hide it from unknown sources.
+- Do not configure the protected port to be blocked by the original firewall, or KnockGate cannot make it reachable after knocking.
+- Allow UDP knock packets to reach the server path. Host-level `nftables` does not need accept rules for knock ports, but upstream cloud firewalls must not block them before they reach the host.
+- Use random high UDP knock ports and keep the import QR private.
+
+Example:
+
+- Existing firewall allows SSH `22` and app port `5432`.
+- KnockGate protects `5432`.
+- Before knock: `5432` is dropped by KnockGate.
+- After knock: the client IP can reach `5432`, subject to the original firewall still allowing it.
 
 ## Requirements
 
@@ -57,7 +69,7 @@ Supported systems:
 - Fedora 38+
 - Arch Linux
 
-Runtime dependencies:
+Dependencies:
 
 - `bash`
 - `systemd`
@@ -66,24 +78,25 @@ Runtime dependencies:
 - `iproute2`
 - `qrencode`
 
-The script can install missing packages on supported distributions. If `knockd` is unavailable, it stops with a clear error. `qrencode` is used to render terminal QR codes for client import URLs.
+The script can install missing packages on supported distributions. `qrencode` is used to render terminal QR codes for client import URLs.
 
 ## Files
 
 Repository files:
 
 - `knockgate.sh` - server-side installer and manager
-- `rfcjp-knock.sh` - generic client-side knock helper
-- `rfcjp-check.sh` - generic client-side TCP connectivity checker
+- `rfcjp-knock.sh` - client-side UDP knock helper
+- `rfcjp-check.sh` - client-side TCP connectivity checker
 
 Installed server paths:
 
 - `/usr/local/bin/knockgate`
 - `/etc/knockgate/knockgate.conf`
+- `/etc/knockgate/knockgate.nft`
 - `/etc/knockgate/backups`
 - `/etc/knockgate/README`
-- `/etc/nftables.conf`
 - `/etc/knockd.conf`
+- `/etc/systemd/system/knockgate-nft.service`
 - `/etc/systemd/system/knockd.service.d/override.conf`
 
 ## Install
@@ -101,24 +114,10 @@ After install:
 sudo knockgate
 ```
 
-One-line install after publishing to GitHub:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/knockgate.sh -o /tmp/knockgate.sh \
-  && chmod +x /tmp/knockgate.sh \
-  && sudo /tmp/knockgate.sh
-```
-
-Installer script form:
+One-line install:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh | sudo KNOCKGATE_REPO=leconio/knockport bash
-```
-
-The installer installs only the server manager by default:
-
-```text
-/usr/local/bin/knockgate
 ```
 
 Client helpers are not installed on the server unless explicitly requested. On a client machine:
@@ -126,46 +125,6 @@ Client helpers are not installed on the server unless explicitly requested. On a
 ```bash
 curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh | sudo KNOCKGATE_REPO=leconio/knockport INSTALL_CLIENT_HELPERS=1 bash
 ```
-
-For forks or self-hosted raw file URLs:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/install.sh | sudo KNOCKGATE_RAW_BASE=https://raw.githubusercontent.com/OWNER/REPO/main bash
-```
-
-## First Run
-
-On startup, choose a language:
-
-```text
-1. 中文
-2. English
-```
-
-You can skip the language prompt:
-
-```bash
-sudo KNOCKGATE_LANG=zh knockgate
-sudo KNOCKGATE_LANG=en knockgate
-```
-
-During install or reset, KnockGate will:
-
-1. detect the current SSH port;
-2. read current firewall `accept` rules;
-3. keep currently accepted TCP/UDP ports open;
-4. require confirmation that inbound policy will become `DROP`;
-5. ask for protected ports;
-6. roll 6 random knock ports;
-7. show a final summary;
-8. require uppercase `YES` before applying.
-
-Random knock ports avoid:
-
-- current always-open TCP/UDP firewall ports;
-- user-provided protected ports;
-- currently listening TCP/UDP ports;
-- duplicate ports inside the knock sequence.
 
 ## Menu
 
@@ -180,92 +139,43 @@ KnockGate Manager
 6. Show temporary allowlist
 7. Add IP to temporary allowlist
 8. Flush temporary allowlist
-9. Restore firewall backup
+9. Reload KnockGate rules
 10. Uninstall
 11. Generate client import QR
 12. Exit
 ```
 
-Dangerous actions require confirmation. Applying firewall rules, restoring backups, uninstalling, flushing allowlists, and permanent IP allows all require explicit prompts.
+## Client Unlock
 
-## How To Unlock From A Client
-
-KnockGate uses a UDP knock sequence. The client must send one UDP datagram to each knock port in the exact order shown by `knockgate`.
-
-Rules:
-
-- use UDP;
-- send ports in the exact order;
-- do not skip ports;
-- do not reorder ports;
-- do not insert other knock ports between them;
-- finish the whole sequence within `SEQ_TIMEOUT`;
-- use a short delay such as `0.2s` to `0.5s` between ports;
-- after success, the client source IP is added to the temporary allowlist;
-- that source IP can access all protected ports until `OPEN_TIMEOUT` expires.
-
-Example server-side summary:
-
-```text
-Knock sequence: 38127 -> 19452 -> 47219 -> 26083 -> 50001 -> 50002
-Seq timeout: 10s
-Open timeout: 12h
-Protected ports: 5432,9092
-```
-
-Unlock with the helper script:
+Use UDP knocks in the exact order shown by `knockgate`:
 
 ```bash
 ./rfcjp-knock.sh SERVER_IP 38127 19452 47219 26083 50001 50002
 ```
 
-UDP knocks do not require root privileges. You can adjust the delay between datagrams:
-
-```bash
-./rfcjp-knock.sh --delay 0.5 SERVER_IP 38127 19452 47219 26083 50001 50002
-```
-
-Equivalent manual UDP sequence:
+Manual equivalent:
 
 ```bash
 printf knockgate | nc -u -w1 SERVER_IP 38127 || true
 sleep 0.25
 printf knockgate | nc -u -w1 SERVER_IP 19452 || true
-sleep 0.25
-printf knockgate | nc -u -w1 SERVER_IP 47219 || true
-sleep 0.25
-printf knockgate | nc -u -w1 SERVER_IP 26083 || true
-sleep 0.25
-printf knockgate | nc -u -w1 SERVER_IP 50001 || true
-sleep 0.25
-printf knockgate | nc -u -w1 SERVER_IP 50002 || true
 ```
 
-After knocking, test a protected port:
+After knocking, check a protected TCP port:
 
 ```bash
 ./rfcjp-check.sh SERVER_IP 5432
 ```
 
-Interpretation:
+Results:
 
-- `OPEN`: firewall opened and a service is listening;
-- `REFUSED`: firewall opened, but no service is listening;
-- `FILTERED/TIMEOUT`: knock did not open the allowlist, or the network path is filtering.
-
-If the sequence fails, check:
-
-- ports are in the exact order;
-- all knocks finished within `SEQ_TIMEOUT`;
-- knocking and protected access use the same public source IP;
-- proxy, VPN, or NAT is not changing source IP;
-- `knockd` is listening on the correct interface.
-
-If a local proxy, VPN, or TUN device intercepts UDP traffic, the knock packets may never reach the server. In that case the helper may finish but the server allowlist stays empty. Test from a clean route, bypass the proxy for the server IP, or use another host as the client.
+- `OPEN`: firewall opened and a service is listening.
+- `REFUSED`: firewall path is open, but no service is listening.
+- `FILTERED`: still blocked or packet path is filtering.
 
 ## Client Import URL
 
-Menu item 11 prints a QR code and the protocol URL below it. The URL uses KnockGate's custom scheme for a future client app:
+Menu item 11 prints a QR code and the protocol URL below it:
 
 ```text
 knockgate://import/v1?host=SERVER_IP&scheme=udp&knock_ports=38127%2C19452%2C47219&protected_ports=5432&seq_timeout=10&open_timeout=12h&label=KnockGate
@@ -273,124 +183,19 @@ knockgate://import/v1?host=SERVER_IP&scheme=udp&knock_ports=38127%2C19452%2C4721
 
 The QR code contains the UDP knock sequence. Treat it like a secret and share it only with trusted clients.
 
-## Client Helpers
-
-Knock:
-
-```bash
-./rfcjp-knock.sh SERVER_IP PORT1 PORT2 PORT3 PORT4 PORT5 PORT6
-```
-
-Check connectivity only:
-
-```bash
-./rfcjp-check.sh SERVER_IP
-```
-
-Check specific TCP ports:
-
-```bash
-./rfcjp-check.sh SERVER_IP 22 80 443 5432
-```
-
-Connectivity checks have a hard timeout. Default is `3s`; override it when needed:
-
-```bash
-./rfcjp-check.sh --timeout 5 SERVER_IP 5432
-CHECK_TIMEOUT=5 ./rfcjp-check.sh SERVER_IP 5432
-```
-
-Override default check ports:
-
-```bash
-SSH_PORT=2222 PROTECTED_PORT=5432 ORDINARY_PORT=15555 ./rfcjp-check.sh SERVER_IP
-```
-
-Typical test flow:
-
-```bash
-./rfcjp-check.sh SERVER_IP
-./rfcjp-knock.sh SERVER_IP PORT1 PORT2 PORT3 PORT4 PORT5 PORT6
-./rfcjp-check.sh SERVER_IP
-```
-
-## Manual Allowlist
-
-Menu option 7 manually allows an IP.
-
-Supported durations:
-
-- `30s`
-- `10m`
-- `12h`
-- `1d`
-- `0` for permanent
-
-Permanent entries do not expire automatically. KnockGate warns and requires uppercase `YES` before adding a permanent allow.
-
-Menu option 6 shows:
-
-- allowed IP;
-- protected ports it can access;
-- remaining time;
-- raw `nftables` set output.
-
-## Backups And Restore
-
-Before writing important files, KnockGate creates timestamped backups in:
-
-```text
-/etc/knockgate/backups
-```
-
-It backs up:
-
-- `/etc/nftables.conf`
-- `/etc/knockd.conf`
-- `/etc/default/knockd`
-- systemd overrides
-- live `nft list ruleset`
-
-For UFW or iptables-nft compatibility rules, direct `nft -f` replay may fail. When UFW is detected and configuration exists, KnockGate can fall back to:
-
-```bash
-nft flush ruleset
-ufw --force reload
-```
-
 ## Uninstall
-
-Run:
-
-```bash
-sudo knockgate
-```
-
-Choose:
-
-```text
-10. Uninstall
-```
 
 The uninstall flow can:
 
 - stop and disable `knockd`;
+- stop and disable `knockgate-nft.service`;
 - delete the live `inet knockgate` nft table;
-- restore `nftables.conf` backups;
-- restore `knockd.conf` backups;
-- remove the systemd override;
+- remove KnockGate's nft config and systemd files;
+- restore `knockd.conf` backups if requested;
 - delete `/usr/local/bin/knockgate`;
 - optionally delete `/etc/knockgate`.
 
-## Safety Notes
-
-- Always confirm SSH remains open before applying.
-- Keep cloud/provider console rescue access available for remote servers.
-- Firewall takeover rewrites `/etc/nftables.conf`.
-- The default inbound policy is `DROP`.
-- Knock ports are not opened in nftables; `knockd` observes UDP packets through packet capture.
-- This version is IPv4-focused.
-- Do not treat port knocking as strong authentication.
+It does not restore or rewrite `/etc/nftables.conf` because KnockGate does not modify it.
 
 ## License
 
