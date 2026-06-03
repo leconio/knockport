@@ -4,7 +4,7 @@
 
 ## 这是做什么的
 
-KnockGate 是一个 Go 编写的服务端工具：它使用 `libpcap` 在网卡上抓取 UDP 顺序敲门包，对每一步执行 `HMAC-SHA256 + timestamp + nonce` 校验，成功后把来源 IPv4 临时加入 `nftables` timeout set。
+KnockGate 是一个 Go 编写的服务端工具：它使用 `libpcap` 在网卡上抓取 UDP 顺序敲门包，先按端口顺序推进状态，只在最后一步执行 `HMAC-SHA256 + timestamp + nonce` 校验，成功后把来源 IPv4 临时加入 `nftables` timeout set。
 
 它不会监听敲门端口，不依赖 `knockd`，也不会接管你的原防火墙。KnockGate 只管理自己的 `table inet knockgate`，并只对你指定的保护 TCP 端口做预过滤。SSH 端口规则不读取、不询问、不修改。
 
@@ -16,7 +16,8 @@ KnockGate 是一个 Go 编写的服务端工具：它使用 `libpcap` 在网卡�
 
 - Go 进程以 systemd 服务运行：`/usr/local/bin/knockgate serve`
 - 通过 libpcap 抓取目的端口属于敲门序列的 UDP 包；
-- 校验 payload：`KG1|step|unix_timestamp|nonce|hmac`
+- 前面的敲门包只检查端口顺序，不做 HMAC；
+- 最后一个包校验 payload：`KG1|step|unix_timestamp|nonce|hmac`
 - HMAC 输入：`KG1|udp_port|step|unix_timestamp|nonce`
 - 按顺序完成所有端口后执行：
   `nft add element inet knockgate knock_allow_temp_v4 { IP timeout OPEN_TIMEOUT }`
@@ -45,6 +46,7 @@ table inet knockgate {
 - 不 flush 系统原规则；
 - 不管理 SSH 端口；
 - 不安装或使用 `knockd`；
+- HMAC 只在最后一步执行，避免公网噪声对每个敲门包都触发加密计算；
 - 敲门端口不需要真正开放，但云厂商安全组必须允许 UDP 包到达主机，否则 pcap 看不到。
 
 ## 环境要求

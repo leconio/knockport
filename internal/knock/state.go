@@ -27,19 +27,16 @@ func NewState() *State {
 	}
 }
 
-// Accept 验证 HMAC、timestamp、nonce 和端口顺序。
+// Accept 验证端口顺序，并且只在最后一步校验 HMAC、timestamp、nonce。
 //
 // 顺序语义：
 // - 第 0 步必须先到；
 // - 整个序列必须在 SEQ_TIMEOUT 内完成；
-// - 合法 HMAC 但顺序错误会重置该来源 IP 的状态；
-// - nonce 在窗口内只能使用一次，避免录包重放。
+// - 前面的步骤只检查目的端口顺序，不解析 payload，降低 CPU 压力；
+// - 只有最后一个端口的 payload 必须通过 HMAC/timestamp/nonce 校验；
+// - 最后一步 nonce 在窗口内只能使用一次，避免录包重放。
 func (s *State) Accept(cfg config.Config, secret []byte, sourceIP string, destPort int, payload []byte, now time.Time) bool {
-	parsed, ok := protocol.Verify(secret, destPort, string(payload), cfg.HMACWindowSeconds, now)
-	if !ok {
-		return false
-	}
-	if parsed.Step >= len(cfg.KnockPorts) || cfg.KnockPorts[parsed.Step] != destPort {
+	if len(cfg.KnockPorts) == 0 {
 		return false
 	}
 
@@ -47,34 +44,25 @@ func (s *State) Accept(cfg config.Config, secret []byte, sourceIP string, destPo
 	defer s.mu.Unlock()
 	s.cleanup(now)
 
-	nonceKey := sourceIP + "|" + parsed.Nonce
-	if _, exists := s.nonces[nonceKey]; exists {
-		log.Printf("拒绝重放 nonce：source=%s step=%d port=%d", sourceIP, parsed.Step, destPort)
-		return false
-	}
-	s.nonces[nonceKey] = now.Add(time.Duration(cfg.HMACWindowSeconds+cfg.SeqTimeoutSeconds) * time.Second)
-
 	current, exists := s.seq[sourceIP]
 	if !exists || now.After(current.deadline) {
-		if parsed.Step != 0 {
+		if destPort != cfg.KnockPorts[0] {
 			delete(s.seq, sourceIP)
 			return false
 		}
-		return s.startOrComplete(cfg, sourceIP, now)
+		return s.startOrVerifyFinal(cfg, secret, sourceIP, destPort, payload, now)
 	}
 
-	if parsed.Step != current.next {
-		if parsed.Step == 0 {
-			return s.startOrComplete(cfg, sourceIP, now)
+	if current.next >= len(cfg.KnockPorts) || destPort != cfg.KnockPorts[current.next] {
+		if destPort == cfg.KnockPorts[0] {
+			return s.startOrVerifyFinal(cfg, secret, sourceIP, destPort, payload, now)
 		}
 		delete(s.seq, sourceIP)
 		return false
 	}
 
-	if parsed.Step == len(cfg.KnockPorts)-1 {
-		delete(s.seq, sourceIP)
-		log.Printf("敲门序列完成：source=%s", sourceIP)
-		return true
+	if current.next == len(cfg.KnockPorts)-1 {
+		return s.verifyFinal(cfg, secret, sourceIP, destPort, payload, now)
 	}
 
 	current.next++
@@ -82,11 +70,9 @@ func (s *State) Accept(cfg config.Config, secret []byte, sourceIP string, destPo
 	return false
 }
 
-func (s *State) startOrComplete(cfg config.Config, sourceIP string, now time.Time) bool {
+func (s *State) startOrVerifyFinal(cfg config.Config, secret []byte, sourceIP string, destPort int, payload []byte, now time.Time) bool {
 	if len(cfg.KnockPorts) == 1 {
-		delete(s.seq, sourceIP)
-		log.Printf("单步敲门完成：source=%s", sourceIP)
-		return true
+		return s.verifyFinal(cfg, secret, sourceIP, destPort, payload, now)
 	}
 	s.seq[sourceIP] = sequenceState{
 		next:     1,
@@ -94,6 +80,23 @@ func (s *State) startOrComplete(cfg config.Config, sourceIP string, now time.Tim
 	}
 	log.Printf("敲门序列开始：source=%s", sourceIP)
 	return false
+}
+
+func (s *State) verifyFinal(cfg config.Config, secret []byte, sourceIP string, destPort int, payload []byte, now time.Time) bool {
+	delete(s.seq, sourceIP)
+	parsed, ok := protocol.Verify(secret, destPort, string(payload), cfg.HMACWindowSeconds, now)
+	if !ok || parsed.Step != len(cfg.KnockPorts)-1 {
+		log.Printf("最终敲门包 HMAC 校验失败：source=%s port=%d", sourceIP, destPort)
+		return false
+	}
+	nonceKey := sourceIP + "|" + parsed.Nonce
+	if _, exists := s.nonces[nonceKey]; exists {
+		log.Printf("拒绝重放 nonce：source=%s step=%d port=%d", sourceIP, parsed.Step, destPort)
+		return false
+	}
+	s.nonces[nonceKey] = now.Add(time.Duration(cfg.HMACWindowSeconds+cfg.SeqTimeoutSeconds) * time.Second)
+	log.Printf("敲门序列完成：source=%s", sourceIP)
+	return true
 }
 
 func (s *State) cleanup(now time.Time) {

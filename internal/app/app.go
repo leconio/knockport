@@ -29,8 +29,14 @@ func Run(args []string) error {
 		if os.Geteuid() == 0 {
 			return Menu()
 		}
+		ui.SetLanguageFromEnvDefault()
 		Usage()
 		return nil
+	}
+	if args[0] == "install" || args[0] == "repair" || args[0] == "reset" {
+		ui.ChooseLanguage()
+	} else {
+		ui.SetLanguageFromEnvDefault()
 	}
 	switch args[0] {
 	case "serve":
@@ -51,7 +57,7 @@ func Run(args []string) error {
 		return Allowlist()
 	case "allow":
 		if len(args) != 2 {
-			return errors.New("用法：knockgate allow IPv4")
+			return errors.New(ui.T("用法：knockgate allow IPv4", "usage: knockgate allow IPv4"))
 		}
 		return AddAllow(args[1])
 	case "flush":
@@ -68,12 +74,12 @@ func Run(args []string) error {
 		Usage()
 		return nil
 	default:
-		return fmt.Errorf("未知命令：%s", args[0])
+		return fmt.Errorf("%s: %s", ui.T("未知命令", "unknown command"), args[0])
 	}
 }
 
 func Usage() {
-	fmt.Print(`KnockGate Go 服务端
+	fmt.Print(ui.T(`KnockGate Go 服务端
 
 用法：
   knockgate                 root 下打开交互菜单
@@ -89,7 +95,23 @@ func Usage() {
   knockgate clear           删除 KnockGate 自己的 nft table
   knockgate qr              输出客户端导入 URL / QR
   knockgate uninstall       卸载
-`)
+`, `KnockGate Go server
+
+Usage:
+  knockgate                 Open interactive menu as root
+  knockgate install         Install / repair
+  knockgate reset           Reset protected ports, knock sequence, secret, and timings
+  knockgate update          Rewrite rules and restart service from current config
+  knockgate serve           pcap capture service mode for systemd
+  knockgate status          Show service, rules, allowlist, and config
+  knockgate logs            Show recent logs
+  knockgate logs-follow     Follow logs
+  knockgate allow IPv4      Manually add IP to temporary allowlist
+  knockgate flush           Flush temporary allowlist
+  knockgate clear           Delete KnockGate's own nft table
+  knockgate qr              Print client import URL / QR
+  knockgate uninstall       Uninstall
+`))
 }
 
 func Serve() error {
@@ -139,7 +161,7 @@ func Install() error {
 	if err := system.Systemctl("restart", "knockgate.service"); err != nil {
 		return err
 	}
-	fmt.Println(ui.Green("安装完成。SSH 和原防火墙规则未修改。"))
+	fmt.Println(ui.Green(ui.T("安装完成。SSH 和原防火墙规则未修改。", "Installed. SSH and existing firewall rules were not modified.")))
 	PrintSummary(cfg)
 	return ImportURL()
 }
@@ -202,7 +224,7 @@ func Logs(follow bool) error {
 
 func Allowlist() error {
 	cfg := config.LoadOrDefault()
-	fmt.Printf("保护端口：%s\n", config.JoinPorts(cfg.ProtectedPorts))
+	fmt.Printf("%s: %s\n", ui.T("保护端口", "Protected ports"), config.JoinPorts(cfg.ProtectedPorts))
 	return nft.ShowAllowlist()
 }
 
@@ -212,7 +234,7 @@ func AddAllow(ip string) error {
 	}
 	addr, err := netip.ParseAddr(ip)
 	if err != nil || !addr.Is4() {
-		return fmt.Errorf("无效 IPv4：%s", ip)
+		return fmt.Errorf("%s: %s", ui.T("无效 IPv4", "invalid IPv4"), ip)
 	}
 	cfg, err := config.Load()
 	if err != nil {
@@ -228,7 +250,7 @@ func FlushAllowlist() error {
 	if err := nft.FlushAllowlist(); err != nil {
 		return err
 	}
-	fmt.Println(ui.Green("临时白名单已清空。"))
+	fmt.Println(ui.Green(ui.T("临时白名单已清空。", "Temporary allowlist flushed.")))
 	return nil
 }
 
@@ -247,8 +269,8 @@ func ClearTable() error {
 	if err := system.RequireRoot(); err != nil {
 		return err
 	}
-	if !ui.Confirm("删除 KnockGate 自己的 nft table？不会修改 SSH 或其他防火墙规则", false) {
-		return errors.New("已取消")
+	if !ui.Confirm(ui.T("删除 KnockGate 自己的 nft table？不会修改 SSH 或其他防火墙规则", "Delete KnockGate's own nft table? SSH and other firewall rules are not modified"), false) {
+		return errors.New(ui.T("已取消", "cancelled"))
 	}
 	return nft.ClearTable()
 }
@@ -257,42 +279,43 @@ func Uninstall() error {
 	if err := system.RequireRoot(); err != nil {
 		return err
 	}
-	if !ui.Confirm("卸载 KnockGate Go 服务并删除它自己的 nft table？", false) {
-		return errors.New("已取消")
+	if !ui.Confirm(ui.T("卸载 KnockGate Go 服务并删除它自己的 nft table？", "Uninstall KnockGate Go service and delete its own nft table?"), false) {
+		return errors.New(ui.T("已取消", "cancelled"))
 	}
 	_ = system.Systemctl("disable", "--now", "knockgate.service")
 	_ = nft.ClearTable()
 	_ = os.Remove(system.ServiceFile)
 	system.CleanupLegacy()
 	_ = system.Systemctl("daemon-reload")
-	if ui.Confirm("删除 /usr/local/bin/knockgate？", false) {
+	if ui.Confirm(ui.T("删除 /usr/local/bin/knockgate？", "Delete /usr/local/bin/knockgate?"), false) {
 		_ = os.Remove(system.InstallPath)
 	}
-	if ui.Confirm("删除 /etc/knockgate？", false) {
+	if ui.Confirm(ui.T("删除 /etc/knockgate？", "Delete /etc/knockgate?"), false) {
 		_ = os.RemoveAll(config.Dir)
 	}
-	fmt.Println(ui.Green("卸载完成。"))
+	fmt.Println(ui.Green(ui.T("卸载完成。", "Uninstall finished.")))
 	return nil
 }
 
 func Menu() error {
+	ui.ChooseLanguage()
 	for {
 		fmt.Println()
 		fmt.Println(ui.Cyan("KnockGate Manager"))
-		fmt.Println("1. 安装 / 修复")
-		fmt.Println("2. 更新配置")
-		fmt.Println("3. 重置保护端口、敲门序列、密钥和时间")
-		fmt.Println("4. 查看状态")
-		fmt.Println("5. 查看日志")
-		fmt.Println("6. 查看临时白名单")
-		fmt.Println("7. 添加 IP 到临时白名单")
-		fmt.Println("8. 清空临时白名单")
-		fmt.Println("9. 重载 KnockGate 规则")
-		fmt.Println("10. 清空 KnockGate 防火墙表")
-		fmt.Println("11. 生成客户端导入二维码")
-		fmt.Println("12. 卸载")
-		fmt.Println("13. 退出")
-		switch ui.Prompt("请选择", "") {
+		fmt.Println(ui.T("1. 安装 / 修复", "1. Install / Repair"))
+		fmt.Println(ui.T("2. 更新配置", "2. Update config"))
+		fmt.Println(ui.T("3. 重置保护端口、敲门序列、密钥和时间", "3. Reset protected ports, knock sequence, secret, and timings"))
+		fmt.Println(ui.T("4. 查看状态", "4. Show status"))
+		fmt.Println(ui.T("5. 查看日志", "5. Show logs"))
+		fmt.Println(ui.T("6. 查看临时白名单", "6. Show temporary allowlist"))
+		fmt.Println(ui.T("7. 添加 IP 到临时白名单", "7. Add IP to temporary allowlist"))
+		fmt.Println(ui.T("8. 清空临时白名单", "8. Flush temporary allowlist"))
+		fmt.Println(ui.T("9. 重载 KnockGate 规则", "9. Reload KnockGate rules"))
+		fmt.Println(ui.T("10. 清空 KnockGate 防火墙表", "10. Clear KnockGate firewall table"))
+		fmt.Println(ui.T("11. 生成客户端导入二维码", "11. Generate client import QR"))
+		fmt.Println(ui.T("12. 卸载", "12. Uninstall"))
+		fmt.Println(ui.T("13. 退出", "13. Exit"))
+		switch ui.Prompt(ui.T("请选择", "Select"), "") {
 		case "1":
 			_ = Install()
 		case "2":
@@ -320,33 +343,33 @@ func Menu() error {
 		case "13", "q", "quit", "exit":
 			return nil
 		default:
-			fmt.Println(ui.Yellow("未知选择。"))
+			fmt.Println(ui.Yellow(ui.T("未知选择。", "Unknown selection.")))
 		}
 	}
 }
 
 func PromptConfig(current config.Config) (config.Config, error) {
-	fmt.Println(ui.Red("警告：Go 版 KnockGate 使用 libpcap 抓包，不监听敲门端口。"))
-	fmt.Println(ui.Yellow("它只管理 table inet knockgate，只 drop 你输入的保护 TCP 端口。SSH 端口规则不读取、不询问、不修改。"))
-	fmt.Println(ui.Yellow("云防火墙必须允许 UDP 敲门包到达主机；主机 nftables 不需要开放敲门端口。"))
+	fmt.Println(ui.Red(ui.T("警告：Go 版 KnockGate 使用 libpcap 抓包，不监听敲门端口。", "WARNING: KnockGate Go uses libpcap capture and does not listen on knock ports.")))
+	fmt.Println(ui.Yellow(ui.T("它只管理 table inet knockgate，只 drop 你输入的保护 TCP 端口。SSH 端口规则不读取、不询问、不修改。", "It only manages table inet knockgate and only drops the protected TCP ports you enter. SSH rules are not read, prompted for, or modified.")))
+	fmt.Println(ui.Yellow(ui.T("云防火墙必须允许 UDP 敲门包到达主机；主机 nftables 不需要开放敲门端口。", "Cloud firewalls must allow UDP knock packets to reach the host; host nftables does not need to open knock ports.")))
 	fmt.Println()
 
-	protected := promptPorts("保护 TCP 端口", current.ProtectedPorts, false)
+	protected := promptPorts(ui.T("保护 TCP 端口", "Protected TCP ports"), current.ProtectedPorts, false)
 	avoid := append([]int{}, protected...)
 	avoid = append(avoid, detectListeningPorts()...)
 	knocks := rollKnockPorts(avoid, config.DefaultKnockCount)
-	fmt.Printf("随机生成敲门端口：%s\n", config.JoinPorts(knocks))
-	knocks = promptPorts("UDP 敲门序列", knocks, true)
-	openTimeout := ui.Prompt("开门时长", valueString(current.OpenTimeout, config.DefaultOpenTimeout))
+	fmt.Printf("%s: %s\n", ui.T("随机生成敲门端口", "Rolled knock ports"), config.JoinPorts(knocks))
+	knocks = promptPorts(ui.T("UDP 敲门序列", "UDP knock sequence"), knocks, true)
+	openTimeout := ui.Prompt(ui.T("开门时长", "Open timeout"), valueString(current.OpenTimeout, config.DefaultOpenTimeout))
 	for !config.ValidTimeout(openTimeout) {
-		fmt.Println(ui.Yellow("格式示例：30s、10m、12h、1d"))
-		openTimeout = ui.Prompt("开门时长", config.DefaultOpenTimeout)
+		fmt.Println(ui.Yellow(ui.T("格式示例：30s、10m、12h、1d", "Examples: 30s, 10m, 12h, 1d")))
+		openTimeout = ui.Prompt(ui.T("开门时长", "Open timeout"), config.DefaultOpenTimeout)
 	}
-	seqTimeout := promptInt("序列超时秒数", valueInt(current.SeqTimeoutSeconds, config.DefaultSeqTimeout))
-	hmacWindow := promptInt("timestamp/HMAC 容忍窗口秒数", valueInt(current.HMACWindowSeconds, config.DefaultHMACWindow))
-	iface := ui.Prompt("pcap 抓包网卡", valueString(current.Interface, detectDefaultInterface()))
+	seqTimeout := promptInt(ui.T("序列超时秒数", "Sequence timeout seconds"), valueInt(current.SeqTimeoutSeconds, config.DefaultSeqTimeout))
+	hmacWindow := promptInt(ui.T("timestamp/HMAC 容忍窗口秒数", "Timestamp/HMAC tolerance window seconds"), valueInt(current.HMACWindowSeconds, config.DefaultHMACWindow))
+	iface := ui.Prompt(ui.T("pcap 抓包网卡", "pcap capture interface"), valueString(current.Interface, detectDefaultInterface()))
 	secret := current.Secret
-	if secret == "" || ui.Confirm("重新生成 HMAC 密钥？", secret == "") {
+	if secret == "" || ui.Confirm(ui.T("重新生成 HMAC 密钥？", "Generate a new HMAC secret?"), secret == "") {
 		generated, err := config.GenerateSecret()
 		if err != nil {
 			return config.Config{}, err
@@ -365,22 +388,22 @@ func PromptConfig(current config.Config) (config.Config, error) {
 		Mode:              config.DefaultMode,
 	}
 	PrintSummary(next)
-	if !ui.ConfirmYES("应用配置？") {
-		return config.Config{}, errors.New("已取消")
+	if !ui.ConfirmYES(ui.T("应用配置？", "Apply configuration?")) {
+		return config.Config{}, errors.New(ui.T("已取消", "cancelled"))
 	}
 	return next, nil
 }
 
 func PrintSummary(cfg config.Config) {
 	fmt.Println()
-	fmt.Println(ui.Cyan("配置摘要"))
-	fmt.Println("模式：Go + libpcap HMAC UDP 敲门 + nftables 保护端口叠加")
-	fmt.Printf("保护 TCP 端口：%s\n", config.JoinPorts(cfg.ProtectedPorts))
-	fmt.Printf("UDP 敲门序列：%s\n", strings.ReplaceAll(config.JoinPorts(cfg.KnockPorts), ",", " -> "))
-	fmt.Printf("开门时长：%s\n", cfg.OpenTimeout)
-	fmt.Printf("序列超时：%ds\n", cfg.SeqTimeoutSeconds)
-	fmt.Printf("timestamp/HMAC 窗口：%ds\n", cfg.HMACWindowSeconds)
-	fmt.Printf("pcap 网卡：%s\n", cfg.Interface)
+	fmt.Println(ui.Cyan(ui.T("配置摘要", "Configuration summary")))
+	fmt.Println(ui.T("模式：Go + libpcap UDP 顺序敲门 + 最后一步 HMAC + nftables 保护端口叠加", "Mode: Go + libpcap UDP sequence knock + final-step HMAC + nftables protective overlay"))
+	fmt.Printf("%s: %s\n", ui.T("保护 TCP 端口", "Protected TCP ports"), config.JoinPorts(cfg.ProtectedPorts))
+	fmt.Printf("%s: %s\n", ui.T("UDP 敲门序列", "UDP knock sequence"), strings.ReplaceAll(config.JoinPorts(cfg.KnockPorts), ",", " -> "))
+	fmt.Printf("%s: %s\n", ui.T("开门时长", "Open timeout"), cfg.OpenTimeout)
+	fmt.Printf("%s: %ds\n", ui.T("序列超时", "Sequence timeout"), cfg.SeqTimeoutSeconds)
+	fmt.Printf("%s: %ds\n", ui.T("timestamp/HMAC 窗口", "Timestamp/HMAC window"), cfg.HMACWindowSeconds)
+	fmt.Printf("%s: %s\n", ui.T("pcap 网卡", "pcap interface"), cfg.Interface)
 }
 
 func ImportURL() error {
@@ -391,7 +414,7 @@ func ImportURL() error {
 	host := detectHost()
 	url := fmt.Sprintf("knockgate://import/v1?scheme=udp-hmac&host=%s&knock_ports=%s&protected_ports=%s&seq_timeout=%d&open_timeout=%s&hmac_window=%d&secret=%s&label=KnockGate",
 		escape(host), escape(config.JoinPorts(cfg.KnockPorts)), escape(config.JoinPorts(cfg.ProtectedPorts)), cfg.SeqTimeoutSeconds, escape(cfg.OpenTimeout), cfg.HMACWindowSeconds, escape(cfg.Secret))
-	fmt.Println(ui.Cyan("客户端导入 URL："))
+	fmt.Println(ui.Cyan(ui.T("客户端导入 URL：", "Client import URL:")))
 	fmt.Println(url)
 	if _, err := exec.LookPath("qrencode"); err == nil {
 		fmt.Println()
@@ -418,7 +441,7 @@ func promptInt(label string, def int) int {
 		if err == nil && value > 0 {
 			return value
 		}
-		fmt.Println(ui.Yellow("请输入正整数。"))
+		fmt.Println(ui.Yellow(ui.T("请输入正整数。", "Please enter a positive integer.")))
 	}
 }
 

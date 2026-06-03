@@ -4,7 +4,7 @@
 
 ## What This Is
 
-KnockGate is a Go server that captures UDP knock packets with `libpcap`, validates every step with `HMAC-SHA256 + timestamp + nonce`, and temporarily adds the source IPv4 address to an `nftables` timeout set.
+KnockGate is a Go server that captures UDP knock packets with `libpcap`, advances state by port order, validates only the final step with `HMAC-SHA256 + timestamp + nonce`, and temporarily adds the source IPv4 address to an `nftables` timeout set.
 
 It does not listen on the knock ports, does not use `knockd`, and does not take over your existing firewall. KnockGate only manages its own `table inet knockgate` and only pre-filters the protected TCP ports you choose. SSH rules are not read, prompted for, or modified.
 
@@ -16,7 +16,7 @@ The server runs as:
 /usr/local/bin/knockgate serve
 ```
 
-It captures UDP packets on the configured interface and validates:
+It captures UDP packets on the configured interface. Earlier steps only advance the ordered port sequence. The final step validates:
 
 ```text
 Payload:    KG1|step|unix_timestamp|nonce|hmac
@@ -53,6 +53,7 @@ Notes:
 - Existing firewall rules are not flushed.
 - SSH port rules are not changed.
 - `knockd` is not installed or used.
+- HMAC is only evaluated on the final step, reducing CPU cost from public noise.
 - The knock ports are not opened by a UDP socket, but upstream cloud firewalls must allow the UDP packets to reach the host so pcap can see them.
 
 ## Requirements

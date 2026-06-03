@@ -379,9 +379,14 @@ class _HomePageState extends State<HomePage> {
       try {
         for (var step = 0; step < profile.knockPorts.length; step++) {
           final port = profile.knockPorts[step];
-          final payload = buildKnockPayload(profile.secret, port, step);
+          final isFinal = step == profile.knockPorts.length - 1;
+          final payload = isFinal
+              ? buildKnockPayload(profile.secret, port, step)
+              : utf8.encode('KG0|$step');
           socket.send(payload, address, port);
-          _append('UDP-HMAC step $step ${address.address}:$port');
+          _append(
+            '${isFinal ? 'UDP-HMAC' : 'UDP'} step $step ${address.address}:$port',
+          );
           await Future<void>.delayed(const Duration(milliseconds: 250));
         }
       } finally {

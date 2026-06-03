@@ -8,6 +8,7 @@ import (
 )
 
 var enabled = os.Getenv("NO_COLOR") == ""
+var language = normalizeLang(os.Getenv("KNOCKGATE_LANG"))
 
 func color(code, text string) string {
 	if !enabled {
@@ -50,5 +51,50 @@ func Confirm(label string, def bool) bool {
 }
 
 func ConfirmYES(label string) bool {
-	return strings.TrimSpace(Prompt(label+" 输入 YES 继续", "")) == "YES"
+	answer := strings.ToLower(strings.TrimSpace(Prompt(label+" "+T("输入 y/yes 继续", "type y/yes to continue"), "")))
+	return answer == "y" || answer == "yes"
+}
+
+func T(zh, en string) string {
+	if language == "en" {
+		return en
+	}
+	return zh
+}
+
+func Lang() string {
+	return language
+}
+
+func ChooseLanguage() {
+	if language == "zh" || language == "en" {
+		return
+	}
+	fmt.Println()
+	fmt.Println(Cyan("KnockGate"))
+	fmt.Println("1. 中文")
+	fmt.Println("2. English")
+	switch strings.ToLower(Prompt("请选择语言 / Select language", "1")) {
+	case "2", "en", "english":
+		language = "en"
+	default:
+		language = "zh"
+	}
+}
+
+func SetLanguageFromEnvDefault() {
+	if language == "" {
+		language = "zh"
+	}
+}
+
+func normalizeLang(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "zh", "cn", "zh-cn", "chinese":
+		return "zh"
+	case "en", "english":
+		return "en"
+	default:
+		return ""
+	}
 }

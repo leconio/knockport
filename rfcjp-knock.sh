@@ -18,9 +18,9 @@ Examples:
   $(basename "$0") --url 'knockgate://import/v1?scheme=udp-hmac&host=example.com&knock_ports=37708%2C31114&secret=...'
 
 Notes:
-  - Every UDP packet carries KG1|step|timestamp|nonce|hmac.
-  - The HMAC covers the destination UDP port and sequence step.
-  - A fresh nonce is generated for every step.
+  - Earlier UDP packets only advance the server-side port sequence.
+  - Only the final UDP packet carries KG1|step|timestamp|nonce|hmac.
+  - The final HMAC covers the destination UDP port and final sequence step.
   - Timestamp is checked by the server; keep client clock reasonably correct.
 EOF
 }
@@ -168,12 +168,17 @@ SECRET_HEX="$(b64url_to_hex "${KNOCK_SECRET}")"
 
 echo "UDP HMAC knocking ${SERVER}: ${PORTS[*]} (delay ${KNOCK_DELAY}s)"
 step=0
+last_step=$((${#PORTS[@]} - 1))
 for port in "${PORTS[@]}"; do
-    ts="$(date +%s)"
-    nonce_value="$(nonce)"
-    message="KG1|${port}|${step}|${ts}|${nonce_value}"
-    mac="$(b64url_mac "${SECRET_HEX}" "${message}")"
-    payload="KG1|${step}|${ts}|${nonce_value}|${mac}"
+    if (( step == last_step )); then
+        ts="$(date +%s)"
+        nonce_value="$(nonce)"
+        message="KG1|${port}|${step}|${ts}|${nonce_value}"
+        mac="$(b64url_mac "${SECRET_HEX}" "${message}")"
+        payload="KG1|${step}|${ts}|${nonce_value}|${mac}"
+    else
+        payload="KG0|${step}"
+    fi
     echo "  -> step ${step} ${port}/udp"
     send_udp "${SERVER}" "${port}" "${payload}"
     step=$((step + 1))

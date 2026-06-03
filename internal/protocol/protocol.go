@@ -14,7 +14,7 @@ import (
 
 const Version = "KG1"
 
-// Payload 是客户端发到每一个 UDP 敲门端口的数据。
+// Payload 是客户端在最后一个 UDP 敲门端口发送的数据。
 //
 // 格式：
 //
@@ -24,7 +24,8 @@ const Version = "KG1"
 //
 //	KG1|udp_port|step|unix_timestamp|nonce
 //
-// 这样即使旁路观察者把同一个包转发到另一个端口，也无法通过校验。
+// 前面的敲门包可以是任意短 payload；服务端只按 pcap 看到的端口顺序推进状态。
+// 只有全部端口顺序正确之后，服务端才校验最后一个包的 HMAC，以降低 CPU 压力。
 type Payload struct {
 	Step  int
 	Time  int64

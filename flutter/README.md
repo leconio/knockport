@@ -2,7 +2,7 @@
 
 Flutter GUI client for KnockGate UDP port knocking.
 
-The app imports a `knockgate://` profile, sends the UDP-HMAC knock sequence in order, and checks protected TCP ports after the firewall allowlist opens.
+The app imports a `knockgate://` profile, sends the UDP knock sequence in order, places the HMAC payload only on the final step, and checks protected TCP ports after the firewall allowlist opens.
 
 ## Supported platforms
 
