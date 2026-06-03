@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# KnockGate: sequential TCP port knocking + nftables timeout allowlist.
+# KnockGate: sequential UDP port knocking + nftables timeout allowlist.
 # Full firewall takeover mode: inbound policy drop, explicit exception ports,
 # protected ports opened only to IPs in a temporary nftables set.
 
@@ -811,7 +811,7 @@ print_config_summary() {
     echo "$(tr_text "TCP 常开端口：" "TCP always-open ports:") ${EXCEPTION_PORTS}"
     echo "$(tr_text "UDP 常开端口：" "UDP always-open ports:") ${UDP_EXCEPTION_PORTS:-none}"
     echo "$(tr_text "需要敲门的保护端口：" "Protected ports requiring knock:") ${PROTECTED_PORTS}"
-    echo "$(tr_text "敲门序列：" "Knock sequence:") $(knock_ports_to_arrow "${KNOCK_PORTS}")"
+    echo "$(tr_text "UDP 敲门序列：" "UDP knock sequence:") $(knock_ports_to_arrow "${KNOCK_PORTS}")"
     echo "$(tr_text "开门时长：" "Open timeout:") ${OPEN_TIMEOUT}"
     echo "$(tr_text "序列超时：" "Sequence timeout:") ${SEQ_TIMEOUT}s"
     echo "$(tr_text "网卡：" "Interface:") ${INTERFACE}"
@@ -1023,15 +1023,25 @@ apply_nft() {
 
 render_knockd_conf() {
     refresh_binaries
+    local sequence_expr
+
+    sequence_expr="$(printf '%s' "${KNOCK_PORTS}" | awk -F, '{
+        for (i = 1; i <= NF; i++) {
+            printf "%s%s:udp", (i == 1 ? "" : ","), $i
+        }
+    }')"
+
     backup_file "${KNOCKD_CONF}"
     cat > "${KNOCKD_CONF}" <<EOF
 [options]
     UseSyslog
 
 [open-protected]
-    sequence      = ${KNOCK_PORTS}
+    sequence      = ${sequence_expr}
     seq_timeout   = ${SEQ_TIMEOUT}
-    tcpflags      = syn
+EOF
+
+    cat >> "${KNOCKD_CONF}" <<EOF
     command       = ${NFT_BIN} add element ${NFT_TABLE_FAMILY} ${NFT_TABLE_NAME} ${NFT_SET_NAME} { %IP% timeout ${OPEN_TIMEOUT} }
 EOF
     chmod 600 "${KNOCKD_CONF}"
@@ -1128,19 +1138,19 @@ print_completion_info() {
 当前 TCP 常开端口： ${EXCEPTION_PORTS}
 当前 UDP 常开端口： ${UDP_EXCEPTION_PORTS:-none}
 当前保护端口： ${PROTECTED_PORTS}
-当前敲门序列： ${KNOCK_PORTS}
+当前 UDP 敲门序列： ${KNOCK_PORTS}
 开门时长： ${OPEN_TIMEOUT}
 网卡： ${INTERFACE}
 
 客户端敲门命令：
-  knock SERVER_IP $(printf '%s' "${KNOCK_PORTS}" | tr ',' ' ')
+  rfcjp-knock SERVER_IP $(printf '%s' "${KNOCK_PORTS}" | tr ',' ' ')
 
-备用 nc SYN 敲门命令：
+备用 nc 敲门命令：
 EOF
     local port
     IFS=',' read -r -a ports <<< "${KNOCK_PORTS}"
     for port in "${ports[@]}"; do
-        echo "  nc -z -w1 SERVER_IP ${port}"
+        echo "  printf knockgate | nc -u -w1 SERVER_IP ${port}"
     done
     cat <<EOF
 

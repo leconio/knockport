@@ -4,7 +4,7 @@
 
 ## What This Is
 
-KnockGate uses `knockd` to watch a sequential TCP knock sequence and uses an `nftables` timeout set to temporarily allow the source IP.
+KnockGate uses `knockd` to watch a sequential UDP knock sequence and uses an `nftables` timeout set to temporarily allow the source IP.
 
 Its security model:
 
@@ -43,7 +43,7 @@ table inet knockgate {
 }
 ```
 
-The knock ports themselves are not opened in the firewall. `knockd` sees TCP SYN packets through packet capture, so the knock ports should usually look `closed`, `filtered`, or timed out from the outside.
+The knock ports themselves are not opened in the firewall. `knockd` sees UDP packets through packet capture, so the knock ports do not need services listening on them.
 
 ## Requirements
 
@@ -189,11 +189,11 @@ Dangerous actions require confirmation. Applying firewall rules, restoring backu
 
 ## How To Unlock From A Client
 
-KnockGate uses a TCP knock sequence. The client must send TCP connection attempts to the knock ports in the exact order shown by `knockgate`.
+KnockGate uses a UDP knock sequence. The client must send one UDP datagram to each knock port in the exact order shown by `knockgate`.
 
 Rules:
 
-- use TCP, not UDP;
+- use UDP;
 - send ports in the exact order;
 - do not skip ports;
 - do not reorder ports;
@@ -218,35 +218,26 @@ Unlock with the helper script:
 ./rfcjp-knock.sh SERVER_IP 38127 19452 47219 26083 50001 50002
 ```
 
-Each knock attempt has a hard timeout. Default is `1s`; override it when needed:
+UDP knocks do not require root privileges. You can adjust the delay between datagrams:
 
 ```bash
-./rfcjp-knock.sh --timeout 2 SERVER_IP 38127 19452 47219 26083 50001 50002
+./rfcjp-knock.sh --delay 0.5 SERVER_IP 38127 19452 47219 26083 50001 50002
 ```
 
-For the most reliable knock, install `nping` from Nmap or `hping3` on the client and send one TCP SYN per port:
+Equivalent manual UDP sequence:
 
 ```bash
-sudo ./rfcjp-knock.sh --method nping SERVER_IP 38127 19452 47219 26083 50001 50002
-sudo ./rfcjp-knock.sh --method hping3 SERVER_IP 38127 19452 47219 26083 50001 50002
-```
-
-If only `nc` is available, the helper falls back to it. `nc` can retransmit TCP SYN packets on filtered ports, which may break a strict knock sequence.
-
-Equivalent manual `nc` sequence:
-
-```bash
-nc -z -w1 SERVER_IP 38127 || true
+printf knockgate | nc -u -w1 SERVER_IP 38127 || true
 sleep 0.25
-nc -z -w1 SERVER_IP 19452 || true
+printf knockgate | nc -u -w1 SERVER_IP 19452 || true
 sleep 0.25
-nc -z -w1 SERVER_IP 47219 || true
+printf knockgate | nc -u -w1 SERVER_IP 47219 || true
 sleep 0.25
-nc -z -w1 SERVER_IP 26083 || true
+printf knockgate | nc -u -w1 SERVER_IP 26083 || true
 sleep 0.25
-nc -z -w1 SERVER_IP 50001 || true
+printf knockgate | nc -u -w1 SERVER_IP 50001 || true
 sleep 0.25
-nc -z -w1 SERVER_IP 50002 || true
+printf knockgate | nc -u -w1 SERVER_IP 50002 || true
 ```
 
 After knocking, test a protected port:
@@ -265,12 +256,11 @@ If the sequence fails, check:
 
 - ports are in the exact order;
 - all knocks finished within `SEQ_TIMEOUT`;
-- use `nping` or `hping3` instead of `nc` if logs show repeated early stages;
 - knocking and protected access use the same public source IP;
 - proxy, VPN, or NAT is not changing source IP;
 - `knockd` is listening on the correct interface.
 
-If a local proxy, VPN, or TUN device intercepts TCP connection attempts, the knock packets may never reach the server. In that case the helper may finish but the server allowlist stays empty. Test from a clean route, bypass the proxy for the server IP, or use another host as the client.
+If a local proxy, VPN, or TUN device intercepts UDP traffic, the knock packets may never reach the server. In that case the helper may finish but the server allowlist stays empty. Test from a clean route, bypass the proxy for the server IP, or use another host as the client.
 
 ## Client Helpers
 
@@ -387,7 +377,7 @@ The uninstall flow can:
 - Keep cloud/provider console rescue access available for remote servers.
 - Firewall takeover rewrites `/etc/nftables.conf`.
 - The default inbound policy is `DROP`.
-- Knock ports are not opened in nftables; `knockd` observes TCP SYN packets through packet capture.
+- Knock ports are not opened in nftables; `knockd` observes UDP packets through packet capture.
 - This version is IPv4-focused.
 - Do not treat port knocking as strong authentication.
 

@@ -4,7 +4,7 @@
 
 ## 这是做什么的
 
-KnockGate 用 `knockd` 监听 TCP 顺序端口敲门，用 `nftables` timeout set 临时放行来源 IP。
+KnockGate 用 `knockd` 监听 UDP 顺序端口敲门，用 `nftables` timeout set 临时放行来源 IP。
 
 它的安全模型是：
 
@@ -43,7 +43,7 @@ table inet knockgate {
 }
 ```
 
-敲门端口本身不需要在防火墙中开放。`knockd` 通过抓包看到 TCP SYN 包，所以敲门端口从外部看通常应该是 `closed`、`filtered` 或超时。
+敲门端口本身不需要在防火墙中开放。`knockd` 通过抓包看到 UDP 包，所以敲门端口不需要有服务监听。
 
 ## 环境要求
 
@@ -189,11 +189,11 @@ KnockGate 管理器
 
 ## 客户端如何开锁
 
-KnockGate 使用 TCP 敲门序列。客户端必须按服务器显示的顺序，对每个敲门端口发起 TCP 连接尝试。
+KnockGate 使用 UDP 敲门序列。客户端必须按服务器显示的顺序，对每个敲门端口发送一个 UDP datagram。
 
 规则：
 
-- 使用 TCP，不是 UDP；
+- 使用 UDP；
 - 严格按顺序敲；
 - 不要跳过端口；
 - 不要乱序；
@@ -218,35 +218,26 @@ KnockGate 使用 TCP 敲门序列。客户端必须按服务器显示的顺序�
 ./rfcjp-knock.sh SERVER_IP 38127 19452 47219 26083 50001 50002
 ```
 
-每个敲门端口都有硬超时，默认 `1s`。需要时可以覆盖：
+UDP 敲门不需要 root 权限。需要时可以调整每个 UDP 包之间的间隔：
 
 ```bash
-./rfcjp-knock.sh --timeout 2 SERVER_IP 38127 19452 47219 26083 50001 50002
+./rfcjp-knock.sh --delay 0.5 SERVER_IP 38127 19452 47219 26083 50001 50002
 ```
 
-最可靠的敲门方式是在客户端安装 Nmap 的 `nping` 或 `hping3`，每个端口只发一个 TCP SYN：
+等价的手动 UDP 命令：
 
 ```bash
-sudo ./rfcjp-knock.sh --method nping SERVER_IP 38127 19452 47219 26083 50001 50002
-sudo ./rfcjp-knock.sh --method hping3 SERVER_IP 38127 19452 47219 26083 50001 50002
-```
-
-如果只有 `nc`，脚本会退回使用 `nc`。但 `nc` 在被 drop 的端口上可能产生 TCP SYN 重传，严格顺序敲门可能因此被打断。
-
-等价的手动 `nc` 命令：
-
-```bash
-nc -z -w1 SERVER_IP 38127 || true
+printf knockgate | nc -u -w1 SERVER_IP 38127 || true
 sleep 0.25
-nc -z -w1 SERVER_IP 19452 || true
+printf knockgate | nc -u -w1 SERVER_IP 19452 || true
 sleep 0.25
-nc -z -w1 SERVER_IP 47219 || true
+printf knockgate | nc -u -w1 SERVER_IP 47219 || true
 sleep 0.25
-nc -z -w1 SERVER_IP 26083 || true
+printf knockgate | nc -u -w1 SERVER_IP 26083 || true
 sleep 0.25
-nc -z -w1 SERVER_IP 50001 || true
+printf knockgate | nc -u -w1 SERVER_IP 50001 || true
 sleep 0.25
-nc -z -w1 SERVER_IP 50002 || true
+printf knockgate | nc -u -w1 SERVER_IP 50002 || true
 ```
 
 敲门后测试保护端口：
@@ -265,12 +256,11 @@ nc -z -w1 SERVER_IP 50002 || true
 
 - 端口顺序是否完全正确；
 - 是否在 `SEQ_TIMEOUT` 内完成；
-- 如果日志显示前几个阶段重复，优先用 `nping` 或 `hping3`，不要用 `nc`；
 - 敲门和访问保护端口是否来自同一个公网来源 IP；
 - 是否有代理、VPN、NAT 改变来源 IP；
 - `knockd` 是否监听了正确网卡。
 
-如果本机代理、VPN 或 TUN 设备拦截了 TCP 连接尝试，敲门包可能根本不会到服务器。这种情况下客户端脚本会执行完，但服务器白名单仍然为空。请使用干净网络路径、给服务器 IP 设置代理绕过，或换一台客户端主机测试。
+如果本机代理、VPN 或 TUN 设备拦截了 UDP 流量，敲门包可能根本不会到服务器。这种情况下客户端脚本会执行完，但服务器白名单仍然为空。请使用干净网络路径、给服务器 IP 设置代理绕过，或换一台客户端主机测试。
 
 ## 客户端辅助脚本
 
@@ -387,7 +377,7 @@ sudo knockgate
 - 远程服务器请确保云厂商控制台/救援方式可用；
 - 防火墙接管会重写 `/etc/nftables.conf`；
 - 默认入站策略是 `DROP`；
-- 敲门端口不在 nftables 里开放，`knockd` 通过抓包观察 TCP SYN；
+- 敲门端口不在 nftables 里开放，`knockd` 通过抓包观察 UDP 包；
 - 当前版本以 IPv4 为主；
 - 不要把端口敲门当作强认证机制。
 
