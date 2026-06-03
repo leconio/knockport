@@ -4,15 +4,24 @@
 
 ## 这是做什么的
 
-KnockGate 用 `knockd` 监听 UDP 顺序端口敲门，用 `nftables` timeout set 临时放行来源 IP。
+KnockGate 是一个 Go 编写的服务端工具：它使用 `libpcap` 在网卡上抓取 UDP 顺序敲门包，对每一步执行 `HMAC-SHA256 + timestamp + nonce` 校验，成功后把来源 IPv4 临时加入 `nftables` timeout set。
 
-它不会接管你原来的防火墙。它只创建自己的 `table inet knockgate`，并且只预先过滤你指定的保护 TCP 端口。其他端口继续保持原防火墙、云安全组和服务本身的行为。
+它不会监听敲门端口，不依赖 `knockd`，也不会接管你的原防火墙。KnockGate 只管理自己的 `table inet knockgate`，并只对你指定的保护 TCP 端口做预过滤。SSH 端口规则不读取、不询问、不修改。
 
-这不是 VPN、代理、隧道或强认证系统。传统端口敲门可能被路径上的观察者重放，它适合减少普通公网扫描暴露，不应替代 SSH key、TLS、应用认证、VPN 或零信任访问控制。
+这不是 VPN、代理或强认证系统。HMAC 能防止简单重放和伪造敲门包，但导入 URL/二维码里的 secret 必须保密。
 
 ## 工作原理
 
-KnockGate 安装一个叠加保护层：
+服务端：
+
+- Go 进程以 systemd 服务运行：`/usr/local/bin/knockgate serve`
+- 通过 libpcap 抓取目的端口属于敲门序列的 UDP 包；
+- 校验 payload：`KG1|step|unix_timestamp|nonce|hmac`
+- HMAC 输入：`KG1|udp_port|step|unix_timestamp|nonce`
+- 按顺序完成所有端口后执行：
+  `nft add element inet knockgate knock_allow_temp_v4 { IP timeout OPEN_TIMEOUT }`
+
+防火墙叠加表：
 
 ```nft
 table inet knockgate {
@@ -30,89 +39,56 @@ table inet knockgate {
 }
 ```
 
-UDP 敲门端口不在 `nftables` 中开放；`knockd` 通过抓包观察 UDP 包。
+关键点：
 
-关键行为：
-
-- 保护 TCP 端口默认被 KnockGate 丢弃；
-- UDP 敲门成功后，来源 IP 被加入临时白名单；
-- 其他流量不由 KnockGate 修改；
-- 不重写 `/etc/nftables.conf`；
-- 原防火墙规则和云安全组仍然生效。
-
-## 推荐配置指南
-
-把 KnockGate 当作已有防火墙前面的一层额外保护：
-
-- SSH、Web、VPN 等公开端口继续由你原来的防火墙或云安全组管理；
-- 保护服务端口应在原防火墙里本来可达，然后由 KnockGate 对未知来源隐藏；
-- 不要在原防火墙里继续阻断保护端口，否则敲门后 KnockGate 也无法绕过原防火墙；
-- UDP 敲门包必须能到达服务器路径。主机 `nftables` 不需要放行敲门端口，但云厂商防火墙不能在包到主机前就拦掉；
-- 使用随机高位 UDP 敲门端口，并把导入二维码当作敏感信息保存。
-
-例子：
-
-- 原防火墙允许 SSH `22` 和应用端口 `5432`；
-- KnockGate 保护 `5432`；
-- 敲门前：`5432` 被 KnockGate 丢弃；
-- 敲门后：客户端 IP 可以访问 `5432`，前提是原防火墙仍允许它通过。
+- 不写 `/etc/nftables.conf`；
+- 不 flush 系统原规则；
+- 不管理 SSH 端口；
+- 不安装或使用 `knockd`；
+- 敲门端口不需要真正开放，但云厂商安全组必须允许 UDP 包到达主机，否则 pcap 看不到。
 
 ## 环境要求
 
-支持系统：
+运行依赖：
 
-- Debian 11/12/13
-- Ubuntu 20.04/22.04/24.04
-- Rocky Linux 8/9
-- AlmaLinux 8/9
-- CentOS Stream 8/9
-- Fedora 38+
-- Arch Linux
-
-依赖组件：
-
-- `bash`
-- `systemd`
+- Linux + systemd
 - `nftables`
-- `knockd`
 - `iproute2`
-- `qrencode`
+- `libpcap`
+- `qrencode` 可选，用于终端二维码
 
-脚本会在支持的发行版上尝试安装缺失依赖。`qrencode` 用于在终端生成客户端导入二维码。
+一键安装会在服务器上安装 Go/gcc/libpcap 开发包并本地编译二进制：
+
+- Debian/Ubuntu：`golang-go gcc libc6-dev libpcap-dev nftables iproute2 qrencode`
+- RHEL/Rocky/Alma/Fedora：`golang gcc glibc-devel libpcap-devel nftables iproute qrencode`
+- Arch：`go gcc glibc libpcap nftables iproute2 qrencode`
 
 ## 文件
 
-仓库文件：
+服务端：
 
-- `knockgate.sh`：服务端安装和管理脚本
-- `rfcjp-knock.sh`：客户端 UDP 敲门脚本
-- `rfcjp-check.sh`：客户端 TCP 连通性检查脚本
-- `flutter/`：Flutter 图形客户端，支持 Android、iOS、macOS、Windows、Linux
+- `cmd/knockgate`：Go 主入口
+- `internal/config`：配置读写
+- `internal/protocol`：HMAC payload 生成/校验
+- `internal/knock`：libpcap 抓包和顺序状态机
+- `internal/nft`：只管理 KnockGate 自己的 nft table
+- `internal/system`：systemd 和依赖安装
+- `install.sh`：一键源码编译安装
 
-安装后的服务端路径：
+安装后路径：
 
 - `/usr/local/bin/knockgate`
 - `/etc/knockgate/knockgate.conf`
 - `/etc/knockgate/knockgate.nft`
-- `/etc/knockgate/backups`
-- `/etc/knockgate/README`
-- `/etc/knockd.conf`
-- `/etc/systemd/system/knockgate-nft.service`
-- `/etc/systemd/system/knockd.service.d/override.conf`
+- `/etc/systemd/system/knockgate.service`
 
 ## 安装
 
-手动安装：
+源码目录手动构建：
 
 ```bash
-chmod +x knockgate.sh
-sudo ./knockgate.sh
-```
-
-安装后运行：
-
-```bash
-sudo knockgate
+go build -o knockgate ./cmd/knockgate
+sudo ./knockgate install
 ```
 
 一键安装：
@@ -121,45 +97,44 @@ sudo knockgate
 curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh | sudo KNOCKGATE_REPO=leconio/knockport bash
 ```
 
-客户端辅助脚本默认不会装到服务器。如需在客户端机器安装：
+安装后：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh | sudo KNOCKGATE_REPO=leconio/knockport INSTALL_CLIENT_HELPERS=1 bash
+sudo knockgate
 ```
 
 ## 菜单
 
 ```text
-KnockGate 管理器
+KnockGate Manager
 
 1. 安装 / 修复
 2. 更新配置
-3. 重置端口和时间
+3. 重置保护端口、敲门序列、密钥和时间
 4. 查看状态
-5. 查看 knockd 日志
+5. 查看日志
 6. 查看临时白名单
 7. 添加 IP 到临时白名单
 8. 清空临时白名单
-9. 重载 KnockGate 保护表
-10. 卸载
+9. 重载 KnockGate 规则
+10. 清空 KnockGate 防火墙表
 11. 生成客户端导入二维码
-12. 退出
+12. 卸载
+13. 退出
 ```
 
 ## 客户端开锁
 
-按 `knockgate` 显示的顺序发送 UDP 敲门：
+使用导入 URL：
 
 ```bash
-./rfcjp-knock.sh SERVER_IP 38127 19452 47219 26083 50001 50002
+./rfcjp-knock.sh --url 'knockgate://import/v1?scheme=udp-hmac&host=SERVER_IP&knock_ports=37708%2C31114&protected_ports=5432&seq_timeout=10&open_timeout=12h&hmac_window=60&secret=BASE64URL_SECRET&label=KnockGate'
 ```
 
-等价手动命令：
+或手动指定 secret：
 
 ```bash
-printf knockgate | nc -u -w1 SERVER_IP 38127 || true
-sleep 0.25
-printf knockgate | nc -u -w1 SERVER_IP 19452 || true
+./rfcjp-knock.sh --secret BASE64URL_SECRET SERVER_IP 37708 31114 25880 62009 61086 33854
 ```
 
 敲门后检查保护 TCP 端口：
@@ -170,31 +145,19 @@ printf knockgate | nc -u -w1 SERVER_IP 19452 || true
 
 结果含义：
 
-- `OPEN`：防火墙已放行，且有服务监听；
-- `REFUSED`：路径已打开，但没有服务监听；
-- `FILTERED`：仍被阻断，或网络路径过滤。
-
-## 客户端导入 URL
-
-菜单第 11 项会生成二维码，并在二维码下方显示协议 URL：
-
-```text
-knockgate://import/v1?host=SERVER_IP&scheme=udp&knock_ports=38127%2C19452%2C47219&protected_ports=5432&seq_timeout=10&open_timeout=12h&label=KnockGate
-```
-
-二维码包含 UDP 敲门顺序，请把它当作敏感信息，只分享给可信客户端。
+- `OPEN`：TCP 握手成功；
+- `REFUSED`：路径已打开，但端口没有服务监听；
+- `FILTERED`：仍被防火墙或网络路径丢弃。
 
 ## Flutter 客户端
 
-[`flutter/`](flutter/) 目录内是图形客户端，可以：
+[`flutter/`](flutter/) 是图形客户端，支持：
 
 - 导入 `knockgate://` URL；
-- 在 Android、iOS、macOS 上扫描导入二维码；
-- 手动修改服务器地址、UDP 敲门端口、保护 TCP 端口和时间参数；
-- 一键发送 UDP 敲门顺序；
-- 检测保护 TCP 端口连通性。
-
-开发命令：
+- Android/iOS/macOS 扫码导入；
+- 手动修改服务器、敲门端口、保护端口、HMAC secret；
+- 一键 UDP-HMAC 敲门；
+- 检测保护 TCP 端口。
 
 ```bash
 cd flutter
@@ -204,21 +167,27 @@ flutter test
 flutter run -d macos
 ```
 
-Windows 和 Linux 图形客户端支持手动配置和粘贴导入 URL。扫码能力目前受插件限制，只在 Android、iOS、macOS 启用。
+## 卸载和清空
 
-## 卸载
+卸载：
 
-卸载流程可以：
+```bash
+sudo knockgate uninstall
+```
 
-- 停止并禁用 `knockd`；
-- 停止并禁用 `knockgate-nft.service`；
-- 删除 live `inet knockgate` nft 表；
-- 删除 KnockGate 自己的 nft 配置和 systemd 文件；
-- 按需恢复 `knockd.conf` 备份；
-- 删除 `/usr/local/bin/knockgate`；
-- 可选删除 `/etc/knockgate`。
+只清空临时白名单：
 
-它不会恢复或重写 `/etc/nftables.conf`，因为 KnockGate 不修改这个文件。
+```bash
+sudo knockgate flush
+```
+
+只删除 KnockGate 自己的 nft table：
+
+```bash
+sudo knockgate clear
+```
+
+这些操作不会修改 SSH 端口规则，也不会恢复或重写 `/etc/nftables.conf`。
 
 ## 协议
 

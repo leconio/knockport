@@ -1,0 +1,225 @@
+package config
+
+import (
+	"bufio"
+	"bytes"
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"os"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+const (
+	Dir         = "/etc/knockgate"
+	File        = "/etc/knockgate/knockgate.conf"
+	NFTFile     = "/etc/knockgate/knockgate.nft"
+	ReadmeFile  = "/etc/knockgate/README"
+	DefaultMode = "go_hmac_pcap_overlay"
+)
+
+const (
+	DefaultProtectedPorts = "5432"
+	DefaultOpenTimeout    = "12h"
+	DefaultSeqTimeout     = 10
+	DefaultHMACWindow     = 60
+	DefaultKnockCount     = 6
+)
+
+// Config 是服务端唯一配置来源。Go 版不再保存 SSH 端口，因为 KnockGate 不接管 SSH。
+type Config struct {
+	ProtectedPorts    []int
+	KnockPorts        []int
+	OpenTimeout       string
+	SeqTimeoutSeconds int
+	HMACWindowSeconds int
+	Secret            string
+	Interface         string
+	Mode              string
+}
+
+// Load 读取 /etc/knockgate/knockgate.conf，并兼容旧 shell 版的 KEY=VALUE 格式。
+func Load() (Config, error) {
+	values, err := ParseFile(File)
+	if err != nil {
+		return Config{}, err
+	}
+	protected, err := ParsePorts(first(values["PROTECTED_PORTS"], values["PROTECTED_PORT"], DefaultProtectedPorts), false)
+	if err != nil {
+		return Config{}, err
+	}
+	knocks, err := ParsePorts(values["KNOCK_PORTS"], true)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg := Config{
+		ProtectedPorts:    protected,
+		KnockPorts:        knocks,
+		OpenTimeout:       first(values["OPEN_TIMEOUT"], DefaultOpenTimeout),
+		SeqTimeoutSeconds: intValue(values["SEQ_TIMEOUT"], DefaultSeqTimeout),
+		HMACWindowSeconds: intValue(values["HMAC_WINDOW"], DefaultHMACWindow),
+		Secret:            values["SECRET"],
+		Interface:         values["INTERFACE"],
+		Mode:              first(values["MODE"], DefaultMode),
+	}
+	if cfg.Secret == "" {
+		return Config{}, errors.New("配置缺少 SECRET，请执行 install/reset 重新生成 HMAC 密钥")
+	}
+	if _, err := DecodeSecret(cfg.Secret); err != nil {
+		return Config{}, err
+	}
+	if !ValidTimeout(cfg.OpenTimeout) {
+		return Config{}, fmt.Errorf("OPEN_TIMEOUT 格式无效：%s", cfg.OpenTimeout)
+	}
+	return cfg, nil
+}
+
+// LoadOrDefault 用于首次安装交互；没有配置时生成一个新密钥。
+func LoadOrDefault() Config {
+	cfg, err := Load()
+	if err == nil {
+		return cfg
+	}
+	secret, _ := GenerateSecret()
+	return Config{
+		ProtectedPorts:    []int{5432},
+		OpenTimeout:       DefaultOpenTimeout,
+		SeqTimeoutSeconds: DefaultSeqTimeout,
+		HMACWindowSeconds: DefaultHMACWindow,
+		Secret:            secret,
+		Mode:              DefaultMode,
+	}
+}
+
+// Save 写入 root-only 配置文件。SECRET 会进入二维码，必须按敏感信息处理。
+func Save(cfg Config) error {
+	if err := os.MkdirAll(Dir, 0700); err != nil {
+		return err
+	}
+	data := fmt.Sprintf(`PROTECTED_PORTS="%s"
+KNOCK_PORTS="%s"
+OPEN_TIMEOUT="%s"
+SEQ_TIMEOUT=%d
+HMAC_WINDOW=%d
+SECRET="%s"
+INTERFACE="%s"
+MODE="%s"
+`, JoinPorts(cfg.ProtectedPorts), JoinPorts(cfg.KnockPorts), cfg.OpenTimeout, cfg.SeqTimeoutSeconds, cfg.HMACWindowSeconds, cfg.Secret, cfg.Interface, DefaultMode)
+	return os.WriteFile(File, []byte(data), 0600)
+}
+
+func ParseFile(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	values := map[string]string{}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		values[strings.TrimSpace(key)] = strings.Trim(strings.TrimSpace(value), `"`)
+	}
+	return values, scanner.Err()
+}
+
+func ParsePorts(text string, sequence bool) ([]int, error) {
+	if strings.TrimSpace(text) == "" {
+		return nil, errors.New("端口列表为空")
+	}
+	var ports []int
+	seen := map[int]bool{}
+	for _, part := range regexp.MustCompile(`[,\s]+`).Split(strings.TrimSpace(text), -1) {
+		if part == "" {
+			continue
+		}
+		port, err := strconv.Atoi(part)
+		if err != nil || !ValidPort(port) {
+			return nil, fmt.Errorf("无效端口：%s", part)
+		}
+		if seen[port] {
+			if sequence {
+				return nil, fmt.Errorf("敲门序列端口不能重复：%d", port)
+			}
+			continue
+		}
+		seen[port] = true
+		ports = append(ports, port)
+	}
+	if len(ports) == 0 {
+		return nil, errors.New("端口列表为空")
+	}
+	return ports, nil
+}
+
+func JoinPorts(ports []int) string {
+	parts := make([]string, len(ports))
+	for i, port := range ports {
+		parts[i] = strconv.Itoa(port)
+	}
+	return strings.Join(parts, ",")
+}
+
+func ValidPort(port int) bool {
+	return port >= 1 && port <= 65535
+}
+
+func ValidTimeout(value string) bool {
+	return regexp.MustCompile(`^[0-9]+(ms|s|m|h|d|w)?$`).MatchString(value)
+}
+
+func GenerateSecret() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func DecodeSecret(value string) ([]byte, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || len(decoded) < 32 {
+		return nil, errors.New("SECRET 必须是至少 32 字节的 base64url 字符串")
+	}
+	return decoded, nil
+}
+
+func SortedUnique(ports []int) []int {
+	seen := map[int]bool{}
+	var out []int
+	for _, port := range ports {
+		if ValidPort(port) && !seen[port] {
+			seen[port] = true
+			out = append(out, port)
+		}
+	}
+	sort.Ints(out)
+	return out
+}
+
+func first(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func intValue(value string, fallback int) int {
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}

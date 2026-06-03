@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:app_links/app_links.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -42,7 +44,9 @@ class KnockProfile {
     required this.knockPorts,
     required this.protectedPorts,
     required this.seqTimeoutSeconds,
+    required this.hmacWindowSeconds,
     required this.openTimeout,
+    required this.secret,
   });
 
   final String label;
@@ -50,7 +54,9 @@ class KnockProfile {
   final List<int> knockPorts;
   final List<int> protectedPorts;
   final int seqTimeoutSeconds;
+  final int hmacWindowSeconds;
   final String openTimeout;
+  final String secret;
 
   factory KnockProfile.defaults() {
     return const KnockProfile(
@@ -59,7 +65,9 @@ class KnockProfile {
       knockPorts: <int>[],
       protectedPorts: <int>[5432],
       seqTimeoutSeconds: 10,
+      hmacWindowSeconds: 60,
       openTimeout: '12h',
+      secret: '',
     );
   }
 
@@ -74,7 +82,11 @@ class KnockProfile {
       seqTimeoutSeconds: json['seqTimeoutSeconds'] is int
           ? json['seqTimeoutSeconds'] as int
           : int.tryParse('${json['seqTimeoutSeconds'] ?? 10}') ?? 10,
+      hmacWindowSeconds: json['hmacWindowSeconds'] is int
+          ? json['hmacWindowSeconds'] as int
+          : int.tryParse('${json['hmacWindowSeconds'] ?? 60}') ?? 60,
       openTimeout: (json['openTimeout'] as String? ?? '12h').trim(),
+      secret: (json['secret'] as String? ?? '').trim(),
     );
   }
 
@@ -84,9 +96,11 @@ class KnockProfile {
       throw const FormatException('Not a KnockGate import URL.');
     }
     final params = uri.queryParameters;
-    final scheme = params['scheme'] ?? 'udp';
-    if (scheme != 'udp') {
-      throw const FormatException('Only UDP KnockGate profiles are supported.');
+    final scheme = params['scheme'] ?? 'udp-hmac';
+    if (scheme != 'udp-hmac') {
+      throw const FormatException(
+        'Only UDP-HMAC KnockGate profiles are supported.',
+      );
     }
     final host = (params['host'] ?? '').trim();
     if (host.isEmpty) {
@@ -100,13 +114,20 @@ class KnockProfile {
     if (protectedPorts.isEmpty) {
       throw const FormatException('Missing protected ports.');
     }
+    final secret = (params['secret'] ?? '').trim();
+    if (secret.isEmpty) {
+      throw const FormatException('Missing HMAC secret.');
+    }
+    decodeBase64Url(secret);
     return KnockProfile(
       label: (params['label'] ?? 'KnockGate').trim(),
       host: host,
       knockPorts: knockPorts,
       protectedPorts: protectedPorts,
       seqTimeoutSeconds: int.tryParse(params['seq_timeout'] ?? '') ?? 10,
+      hmacWindowSeconds: int.tryParse(params['hmac_window'] ?? '') ?? 60,
       openTimeout: (params['open_timeout'] ?? '12h').trim(),
+      secret: secret,
     );
   }
 
@@ -117,7 +138,9 @@ class KnockProfile {
       'knockPorts': knockPorts,
       'protectedPorts': protectedPorts,
       'seqTimeoutSeconds': seqTimeoutSeconds,
+      'hmacWindowSeconds': hmacWindowSeconds,
       'openTimeout': openTimeout,
+      'secret': secret,
     };
   }
 
@@ -127,7 +150,9 @@ class KnockProfile {
     List<int>? knockPorts,
     List<int>? protectedPorts,
     int? seqTimeoutSeconds,
+    int? hmacWindowSeconds,
     String? openTimeout,
+    String? secret,
   }) {
     return KnockProfile(
       label: label ?? this.label,
@@ -135,7 +160,9 @@ class KnockProfile {
       knockPorts: knockPorts ?? this.knockPorts,
       protectedPorts: protectedPorts ?? this.protectedPorts,
       seqTimeoutSeconds: seqTimeoutSeconds ?? this.seqTimeoutSeconds,
+      hmacWindowSeconds: hmacWindowSeconds ?? this.hmacWindowSeconds,
       openTimeout: openTimeout ?? this.openTimeout,
+      secret: secret ?? this.secret,
     );
   }
 
@@ -169,7 +196,9 @@ class _HomePageState extends State<HomePage> {
   final _knockPortsController = TextEditingController();
   final _protectedPortsController = TextEditingController();
   final _seqTimeoutController = TextEditingController();
+  final _hmacWindowController = TextEditingController();
   final _openTimeoutController = TextEditingController();
+  final _secretController = TextEditingController();
   final _importController = TextEditingController();
   final _logController = ScrollController();
 
@@ -194,7 +223,9 @@ class _HomePageState extends State<HomePage> {
     _knockPortsController.dispose();
     _protectedPortsController.dispose();
     _seqTimeoutController.dispose();
+    _hmacWindowController.dispose();
     _openTimeoutController.dispose();
+    _secretController.dispose();
     _importController.dispose();
     _logController.dispose();
     super.dispose();
@@ -228,7 +259,9 @@ class _HomePageState extends State<HomePage> {
     _knockPortsController.text = profile.knockPortText;
     _protectedPortsController.text = profile.protectedPortText;
     _seqTimeoutController.text = profile.seqTimeoutSeconds.toString();
+    _hmacWindowController.text = profile.hmacWindowSeconds.toString();
     _openTimeoutController.text = profile.openTimeout;
+    _secretController.text = profile.secret;
     if (mounted) {
       setState(() {});
     }
@@ -255,6 +288,8 @@ class _HomePageState extends State<HomePage> {
     final knockPorts = parsePorts(_knockPortsController.text);
     final protectedPorts = parsePorts(_protectedPortsController.text);
     final seqTimeout = int.tryParse(_seqTimeoutController.text.trim()) ?? 10;
+    final hmacWindow = int.tryParse(_hmacWindowController.text.trim()) ?? 60;
+    final secret = _secretController.text.trim();
 
     if (host.isEmpty) {
       throw const FormatException('Host is required.');
@@ -270,6 +305,13 @@ class _HomePageState extends State<HomePage> {
     if (seqTimeout < 1) {
       throw const FormatException('Sequence timeout must be positive.');
     }
+    if (hmacWindow < 1) {
+      throw const FormatException('HMAC window must be positive.');
+    }
+    if (secret.isEmpty) {
+      throw const FormatException('HMAC secret is required.');
+    }
+    decodeBase64Url(secret);
     return KnockProfile(
       label: _labelController.text.trim().isEmpty
           ? 'KnockGate'
@@ -278,9 +320,11 @@ class _HomePageState extends State<HomePage> {
       knockPorts: knockPorts,
       protectedPorts: protectedPorts,
       seqTimeoutSeconds: seqTimeout,
+      hmacWindowSeconds: hmacWindow,
       openTimeout: _openTimeoutController.text.trim().isEmpty
           ? '12h'
           : _openTimeoutController.text.trim(),
+      secret: secret,
     );
   }
 
@@ -333,10 +377,11 @@ class _HomePageState extends State<HomePage> {
       final address = await _resolveHost(profile.host);
       final socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
       try {
-        for (final port in profile.knockPorts) {
-          final payload = utf8.encode('knockgate\n');
+        for (var step = 0; step < profile.knockPorts.length; step++) {
+          final port = profile.knockPorts[step];
+          final payload = buildKnockPayload(profile.secret, port, step);
           socket.send(payload, address, port);
-          _append('UDP ${address.address}:$port');
+          _append('UDP-HMAC step $step ${address.address}:$port');
           await Future<void>.delayed(const Duration(milliseconds: 250));
         }
       } finally {
@@ -495,6 +540,20 @@ class _HomePageState extends State<HomePage> {
             ),
           ],
         ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _hmacWindowController,
+          decoration: const InputDecoration(labelText: 'HMAC window seconds'),
+          keyboardType: TextInputType.number,
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _secretController,
+          decoration: const InputDecoration(labelText: 'HMAC secret'),
+          obscureText: true,
+          enableSuggestions: false,
+          autocorrect: false,
+        ),
         const SizedBox(height: 16),
         Row(
           children: [
@@ -644,6 +703,40 @@ Future<InternetAddress> _resolveHost(String host) async {
     (address) => address.type == InternetAddressType.IPv4,
     orElse: () => addresses.first,
   );
+}
+
+List<int> buildKnockPayload(String secret, int port, int step) {
+  final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+  final nonce = randomNonce();
+  final message = 'KG1|$port|$step|$now|$nonce';
+  final mac = Hmac(
+    sha256,
+    decodeBase64Url(secret),
+  ).convert(utf8.encode(message));
+  final encodedMac = base64UrlNoPadding(mac.bytes);
+  return utf8.encode('KG1|$step|$now|$nonce|$encodedMac');
+}
+
+String randomNonce() {
+  final random = Random.secure();
+  final bytes = List<int>.generate(18, (_) => random.nextInt(256));
+  return base64UrlNoPadding(bytes);
+}
+
+List<int> decodeBase64Url(String value) {
+  var normalized = value.replaceAll('-', '+').replaceAll('_', '/');
+  while (normalized.length % 4 != 0) {
+    normalized += '=';
+  }
+  final bytes = base64.decode(normalized);
+  if (bytes.length < 32) {
+    throw const FormatException('HMAC secret must be at least 32 bytes.');
+  }
+  return bytes;
+}
+
+String base64UrlNoPadding(List<int> bytes) {
+  return base64Url.encode(bytes).replaceAll('=', '');
 }
 
 List<int> parsePorts(String text) {

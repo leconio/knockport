@@ -2,7 +2,7 @@
 
 Flutter GUI client for KnockGate UDP port knocking.
 
-The app imports a `knockgate://` profile, sends the UDP knock sequence in order, and checks protected TCP ports after the firewall allowlist opens.
+The app imports a `knockgate://` profile, sends the UDP-HMAC knock sequence in order, and checks protected TCP ports after the firewall allowlist opens.
 
 ## Supported platforms
 
@@ -19,17 +19,19 @@ QR scanning is implemented for Android, iOS, and macOS. On Windows and Linux, pa
 Example:
 
 ```text
-knockgate://import/v1?scheme=udp&host=example.com&knock_ports=37708,31114,25880&protected_ports=5432&seq_timeout=10&open_timeout=12h&label=Home
+knockgate://import/v1?scheme=udp-hmac&host=example.com&knock_ports=37708,31114,25880&protected_ports=5432&seq_timeout=10&open_timeout=12h&hmac_window=60&secret=BASE64URL_SECRET&label=Home
 ```
 
 Fields:
 
-- `scheme=udp` is required.
+- `scheme=udp-hmac` is required.
 - `host` is the server hostname or IP.
 - `knock_ports` is the ordered UDP knock sequence.
 - `protected_ports` are TCP ports to check after knocking.
-- `seq_timeout` is the server-side knockd sequence timeout.
+- `seq_timeout` is the server-side ordered knock timeout.
 - `open_timeout` is the nftables allowlist timeout.
+- `hmac_window` is the timestamp tolerance in seconds.
+- `secret` is the base64url HMAC secret.
 - `label` is the local profile name.
 
 ## Usage

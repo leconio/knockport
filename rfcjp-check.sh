@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SSH_PORT="${SSH_PORT:-22}"
 PROTECTED_PORT="${PROTECTED_PORT:-5432}"
 ORDINARY_PORT="${ORDINARY_PORT:-15555}"
 CHECK_TIMEOUT="${CHECK_TIMEOUT:-3}"
@@ -11,30 +10,23 @@ usage() {
 Usage:
   $(basename "$0") [--verbose] [--timeout SECONDS] SERVER [PORT ...]
 
-Check KnockGate connectivity only. This script does not send a knock sequence.
-Run it before and after the knock script to compare behavior.
+Check TCP connectivity only. This script does not send knock packets.
 
 If PORT arguments are provided, only those ports are checked.
-If no PORT arguments are provided, the default SSH/ordinary/protected checks run.
+If no PORT arguments are provided, the ordinary/protected default checks run.
 
 Defaults:
-  SSH_PORT:       ${SSH_PORT}
   PROTECTED_PORT: ${PROTECTED_PORT}
   ORDINARY_PORT:  ${ORDINARY_PORT}
   CHECK_TIMEOUT:  ${CHECK_TIMEOUT}s
 
-Override ports with environment variables:
-  SSH_PORT=2222 PROTECTED_PORT=5432 ORDINARY_PORT=15555 CHECK_TIMEOUT=2 $(basename "$0") SERVER_IP
-
 Examples:
   $(basename "$0") SERVER_IP
-  $(basename "$0") SERVER_IP 12345
+  $(basename "$0") SERVER_IP 5432
   $(basename "$0") SERVER_IP 22 80 443 5432
   $(basename "$0") --verbose SERVER_IP 5432
   $(basename "$0") --timeout 5 SERVER_IP 5432
-  SSH_PORT=2222 PROTECTED_PORT=5432 $(basename "$0") example.com
-
-Set KNOCKGATE_CHECK_NO_NET_WARN=1 to suppress local proxy/TUN warnings.
+  PROTECTED_PORT=5432 ORDINARY_PORT=15555 CHECK_TIMEOUT=2 $(basename "$0") SERVER_IP
 
 Results:
   OPEN      TCP handshake succeeded. A service is reachable.
@@ -90,24 +82,6 @@ if ! [[ "${CHECK_TIMEOUT}" =~ ^[0-9]+$ ]] || (( CHECK_TIMEOUT < 1 )); then
     echo "Invalid timeout: ${CHECK_TIMEOUT}" >&2
     exit 2
 fi
-
-warn_local_network_context() {
-    [[ "${KNOCKGATE_CHECK_NO_NET_WARN:-0}" == "1" ]] && return 0
-    [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]] || return 0
-
-    local route_info iface proxy_info
-    route_info="$(route -n get "${SERVER}" 2>/dev/null || true)"
-    iface="$(printf '%s\n' "${route_info}" | awk '/interface:/ {print $2; exit}')"
-
-    if [[ "${iface}" == utun* ]]; then
-        echo "WARN route=${iface}; VPN/TUN/proxy may make closed ports look OPEN." >&2
-    fi
-
-    proxy_info="$(scutil --proxy 2>/dev/null || true)"
-    if printf '%s\n' "${proxy_info}" | grep -Eq 'HTTPEnable[[:space:]]*:[[:space:]]*1|HTTPSEnable[[:space:]]*:[[:space:]]*1|SOCKSEnable[[:space:]]*:[[:space:]]*1'; then
-        echo "WARN system proxy is enabled; test from a clean route if results look wrong." >&2
-    fi
-}
 
 is_port() {
     [[ "$1" =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 ))
@@ -176,8 +150,6 @@ try_tcp() {
     fi
 }
 
-warn_local_network_context
-
 if [[ "$#" -gt 0 ]]; then
     for port in "$@"; do
         if ! is_port "${port}"; then
@@ -191,12 +163,10 @@ else
         echo "KnockGate connectivity check"
         echo "This script does not send knock packets."
         echo "Server: ${SERVER}"
-        echo "SSH exception port: ${SSH_PORT}"
         echo "Protected port: ${PROTECTED_PORT}"
         echo "Ordinary unlisted port: ${ORDINARY_PORT}"
     fi
 
-    try_tcp "SSH exception" "${SSH_PORT}"
     try_tcp "Ordinary unlisted port" "${ORDINARY_PORT}"
     try_tcp "Protected port" "${PROTECTED_PORT}"
 fi

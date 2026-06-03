@@ -27,6 +27,46 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
 }
 
+detect_pkg_family() {
+  if [[ ! -r /etc/os-release ]]; then
+    die "unsupported Linux distribution: missing /etc/os-release"
+  fi
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  case "${ID:-}" in
+    debian|ubuntu) echo apt ;;
+    rocky|almalinux|centos|rhel|fedora) echo dnf ;;
+    arch) echo pacman ;;
+    *)
+      case " ${ID_LIKE:-} " in
+        *" debian "*) echo apt ;;
+        *" rhel "*|*" fedora "*) echo dnf ;;
+        *" arch "*) echo pacman ;;
+        *) die "unsupported Linux distribution: ID=${ID:-}, ID_LIKE=${ID_LIKE:-}" ;;
+      esac
+      ;;
+  esac
+}
+
+install_build_deps() {
+  local family
+  family="$(detect_pkg_family)"
+  case "$family" in
+    apt)
+      if ! DEBIAN_FRONTEND=noninteractive apt-get install -y golang-go gcc libc6-dev libpcap-dev nftables iproute2 qrencode; then
+        apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y golang-go gcc libc6-dev libpcap-dev nftables iproute2 qrencode
+      fi
+      ;;
+    dnf)
+      dnf install -y golang gcc glibc-devel libpcap-devel nftables iproute qrencode
+      ;;
+    pacman)
+      pacman -Sy --noconfirm go gcc glibc libpcap nftables iproute2 qrencode
+      ;;
+  esac
+}
+
 build_raw_base() {
   local repo="${KNOCKGATE_REPO:-$DEFAULT_REPO}"
   local branch="${KNOCKGATE_BRANCH:-$DEFAULT_BRANCH}"
@@ -53,11 +93,27 @@ download_file() {
   chmod 0755 "$target_path"
 }
 
+download_source_tree() {
+  local tmpdir="$1"
+  local repo="${KNOCKGATE_REPO:-$DEFAULT_REPO}"
+  local branch="${KNOCKGATE_BRANCH:-$DEFAULT_BRANCH}"
+  local archive="${tmpdir}/source.tar.gz"
+
+  if [[ "$repo" == "$DEFAULT_REPO" ]]; then
+    die "repository is not configured. Set KNOCKGATE_REPO=OWNER/REPO or replace OWNER/REPO after publishing."
+  fi
+
+  blue "Downloading source archive..."
+  curl -fsSL "https://github.com/${repo}/archive/refs/heads/${branch}.tar.gz" -o "$archive"
+  tar -xzf "$archive" -C "$tmpdir" --strip-components=1
+}
+
 main() {
   require_root
   need_cmd curl
   need_cmd install
   need_cmd mktemp
+  need_cmd tar
 
   local raw_base tmpdir
   raw_base="$(build_raw_base)"
@@ -67,7 +123,9 @@ main() {
   blue "${PROJECT_NAME} installer"
   yellow "Source: ${raw_base}"
 
-  download_file "$raw_base" "knockgate.sh" "${tmpdir}/knockgate"
+  install_build_deps
+  download_source_tree "$tmpdir"
+  (cd "$tmpdir" && go build -trimpath -ldflags "-s -w" -o "${tmpdir}/knockgate" ./cmd/knockgate)
   install -m 0755 "${tmpdir}/knockgate" "${INSTALL_DIR}/knockgate"
 
   green "Installed:"
