@@ -4,7 +4,6 @@ set -euo pipefail
 PROJECT_NAME="KnockGate"
 DEFAULT_REPO="leconio/knockport"
 INSTALL_DIR="/usr/local/bin"
-INSTALL_CLIENT_HELPERS="${INSTALL_CLIENT_HELPERS:-0}"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -91,16 +90,6 @@ release_url() {
   fi
 }
 
-raw_base() {
-  local repo="${KNOCKGATE_REPO:-$DEFAULT_REPO}"
-  local branch="${KNOCKGATE_BRANCH:-main}"
-  if [[ -n "${KNOCKGATE_RAW_BASE:-}" ]]; then
-    printf '%s\n' "${KNOCKGATE_RAW_BASE%/}"
-  else
-    printf 'https://raw.githubusercontent.com/%s/%s\n' "${repo}" "${branch}"
-  fi
-}
-
 main() {
   require_root
   need_cmd uname
@@ -123,15 +112,6 @@ main() {
 
   green "Installed:"
   printf '  %s\n' "${INSTALL_DIR}/knockgate"
-
-  if [[ "${INSTALL_CLIENT_HELPERS}" == "1" ]]; then
-    install -m 0755 "${tmpdir}/knockgate_linux_${arch}/rfcjp-knock.sh" "${INSTALL_DIR}/rfcjp-knock"
-    install -m 0755 "${tmpdir}/knockgate_linux_${arch}/rfcjp-check.sh" "${INSTALL_DIR}/rfcjp-check"
-    green "Installed optional client helpers:"
-    printf '  %s\n' "${INSTALL_DIR}/rfcjp-knock" "${INSTALL_DIR}/rfcjp-check"
-  else
-    yellow "Client helpers were not installed. Set INSTALL_CLIENT_HELPERS=1 on client machines if needed."
-  fi
 
   yellow "Run the server manager with: sudo knockgate"
 }

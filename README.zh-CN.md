@@ -2,65 +2,35 @@
 
 [English](README.md)
 
-## 这是做什么的
+KnockGate 是一个 Linux 端口敲门服务。客户端按 UDP 端口顺序发送敲门包后，服务端会把通过校验的来源 IPv4 临时加入 `nftables` 白名单，从而放行指定的保护端口。
 
-KnockGate 是一个 Go 编写的服务端工具：它使用 `libpcap` 在网卡上抓取 UDP 顺序敲门包，先按端口顺序推进状态，只在最后一步执行 `HMAC-SHA256 + timestamp + nonce` 校验，成功后把来源 IPv4 临时加入 `nftables` timeout set。
+KnockGate 使用 `libpcap` 抓包，不监听敲门端口；使用 HMAC 校验最后一个敲门包；只管理自己的 `table inet knockgate`。它不会接管系统防火墙，不会重写 `/etc/nftables.conf`，也不会修改 SSH 规则。
 
-它不会监听敲门端口，不依赖 `knockd`，也不会接管你的原防火墙。KnockGate 只管理自己的 `table inet knockgate`，并只对你指定的保护端口和协议做预过滤。SSH 端口规则不读取、不询问、不修改。
+## 功能
 
-保护端口写法：
+- UDP 顺序端口敲门
+- 最后一步 `HMAC-SHA256 + timestamp + nonce` 校验
+- 基于 `nftables` timeout set 的临时 IPv4 白名单
+- 支持保护 TCP 和 UDP 端口
+- 不重写 `/etc/nftables.conf`
+- 不清空系统原防火墙规则
+- systemd 服务管理
+- 终端二维码导入客户端配置
+- 提供 Linux `amd64` / `arm64` 预编译产物
 
-- `2345`：同时保护 `2345/tcp` 和 `2345/udp`；
-- `2345/tcp`：只保护 TCP；
-- `2345/udp`：只保护 UDP。
+## 保护端口写法
 
-这不是 VPN、代理或强认证系统。HMAC 能防止简单重放和伪造敲门包，但导入 URL/二维码里的 secret 必须保密。
-
-## 工作原理
-
-服务端：
-
-- Go 进程以 systemd 服务运行：`/usr/local/bin/knockgate serve`
-- 通过 libpcap 抓取目的端口属于敲门序列的 UDP 包；
-- 前面的敲门包只检查端口顺序，不做 HMAC；
-- 最后一个包校验 compact binary payload：`K1 + step + unix_timestamp + nonce + truncated_hmac`
-- HMAC 输入：`K1 + udp_port + step + unix_timestamp + nonce`
-- 按顺序完成所有端口后执行：
-  `nft add element inet knockgate knock_allow_temp_v4 { IP timeout OPEN_TIMEOUT }`
-
-防火墙叠加表：
-
-```nft
-table inet knockgate {
-    set knock_allow_temp_v4 {
-        type ipv4_addr
-        flags timeout
-    }
-
-    chain input {
-        type filter hook input priority -150; policy accept;
-
-        ip saddr @knock_allow_temp_v4 tcp dport { PROTECTED_TCP_PORTS } accept
-        tcp dport { PROTECTED_TCP_PORTS } drop
-
-        ip saddr @knock_allow_temp_v4 udp dport { PROTECTED_UDP_PORTS } accept
-        udp dport { PROTECTED_UDP_PORTS } drop
-    }
-}
+```text
+2345      同时保护 2345/tcp 和 2345/udp
+2345/tcp  只保护 TCP
+2345/udp  只保护 UDP
 ```
 
-关键点：
-
-- 不写 `/etc/nftables.conf`；
-- 不 flush 系统原规则；
-- 不管理 SSH 端口；
-- 不安装或使用 `knockd`；
-- HMAC 只在最后一步执行，避免公网噪声对每个敲门包都触发加密计算；
-- 敲门端口不需要真正开放，但云厂商安全组必须允许 UDP 包到达主机，否则 pcap 看不到。
+敲门端口固定使用 UDP。
 
 ## 环境要求
 
-运行依赖：
+服务端：
 
 - Linux + systemd
 - `nftables`
@@ -68,139 +38,175 @@ table inet knockgate {
 - `libpcap`
 - `qrencode` 可选，用于终端二维码
 
-一键安装会下载 GitHub Release 中已经编译好的 Linux 二进制产物，不在目标服务器上编译 Go。
+支持的发行版系列：
 
-- Debian/Ubuntu：`ca-certificates curl tar nftables iproute2 libpcap0.8 qrencode`
-- RHEL/Rocky/Alma/Fedora：`ca-certificates curl tar nftables iproute libpcap qrencode`
-- Arch：`ca-certificates curl tar nftables iproute2 libpcap qrencode`
+- Debian / Ubuntu
+- RHEL 系：Rocky Linux、AlmaLinux、CentOS Stream、Fedora
+- Arch Linux
 
-## 文件
-
-服务端：
-
-- `cmd/knockgate`：Go 主入口
-- `internal/config`：配置读写
-- `internal/protocol`：HMAC payload 生成/校验
-- `internal/knock`：libpcap 抓包和顺序状态机
-- `internal/nft`：只管理 KnockGate 自己的 nft table
-- `internal/system`：systemd 和依赖安装
-- `install.sh`：一键下载 Release 产物并安装
-
-安装后路径：
-
-- `/usr/local/bin/knockgate`
-- `/etc/knockgate/knockgate.conf`
-- `/etc/knockgate/knockgate.nft`
-- `/etc/systemd/system/knockgate.service`
+一键安装脚本会下载 GitHub Release 中的预编译产物，不会在目标服务器上编译 Go。
 
 ## 安装
 
-一键安装：
-
 ```bash
-curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh | sudo KNOCKGATE_REPO=leconio/knockport bash
+curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh | sudo bash
+sudo knockgate install
 ```
 
-Release 产物下载地址：
+Release 产物：
 
-```bash
+```text
 https://github.com/leconio/knockport/releases/latest/download/knockgate_linux_amd64.tar.gz
 https://github.com/leconio/knockport/releases/latest/download/knockgate_linux_arm64.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate-knock.sh
+https://github.com/leconio/knockport/releases/latest/download/knockgate-check.sh
 ```
 
-安装后：
+服务端安装路径：
+
+```text
+/usr/local/bin/knockgate
+/etc/knockgate/knockgate.conf
+/etc/knockgate/knockgate.nft
+/etc/knockgate/knockgate.apply.nft
+/etc/systemd/system/knockgate.service
+```
+
+Shell 客户端脚本会作为 Release 独立资产发布，仓库路径为 `clients/shell/`。`install.sh` 不会把它们安装到服务器。
+
+## 服务端用法
+
+交互菜单：
 
 ```bash
 sudo knockgate
 ```
 
-## 菜单
+常用命令：
+
+```bash
+sudo knockgate install
+sudo knockgate reset
+sudo knockgate update
+sudo knockgate status
+sudo knockgate logs
+sudo knockgate allow 203.0.113.10
+sudo knockgate flush
+sudo knockgate clear
+sudo knockgate qr
+sudo knockgate uninstall
+```
+
+## 配置文件
+
+配置文件路径：
 
 ```text
-KnockGate Manager
-
-1. 安装 / 修复
-2. 更新配置
-3. 重置保护端口、敲门序列、密钥和时间
-4. 查看状态
-5. 查看日志
-6. 查看临时白名单
-7. 添加 IP 到临时白名单
-8. 清空临时白名单
-9. 重载 KnockGate 规则
-10. 清空 KnockGate 防火墙表
-11. 生成客户端导入二维码
-12. 卸载
-13. 退出
+/etc/knockgate/knockgate.conf
 ```
 
-## 客户端开锁
-
-使用导入 URL：
+示例：
 
 ```bash
-./rfcjp-knock.sh --url 'knockgate://import/v1?scheme=udp-hmac&host=SERVER_IP&knock_ports=37708%2C31114&protected_ports=5432&seq_timeout=10&open_timeout=12h&hmac_window=60&secret=BASE64URL_SECRET&label=KnockGate'
+PROTECTED_PORTS="5432,9092/tcp,51820/udp"
+KNOCK_PORTS="45669,65075,31244,20035,64168,59462"
+OPEN_TIMEOUT="12h"
+SEQ_TIMEOUT=10
+HMAC_WINDOW=60
+SECRET="base64url-secret"
+INTERFACE="eth0"
+MODE="go_hmac_pcap_overlay"
 ```
 
-或手动指定 secret：
+修改配置后应用：
 
 ```bash
-./rfcjp-knock.sh --secret BASE64URL_SECRET SERVER_IP 37708 31114 25880 62009 61086 33854
+sudo knockgate update
 ```
 
-敲门后检查保护端口：
+## 防火墙模型
+
+KnockGate 只管理：
+
+```text
+table inet knockgate
+```
+
+这个表的 input hook 使用 `policy accept`，只对配置的保护端口做提前 drop。未匹配 KnockGate 规则的流量会继续走系统原有防火墙逻辑。
+
+例如保护端口写 `2345` 时，规则效果为：
+
+```nft
+ip saddr @knock_allow_temp_v4 tcp dport 2345 accept
+tcp dport 2345 drop
+ip saddr @knock_allow_temp_v4 udp dport 2345 accept
+udp dport 2345 drop
+```
+
+敲门端口不会在 nftables 中放行。服务端通过 pcap 从网卡读取 UDP 包。
+
+## 客户端用法
+
+在服务端生成导入 URL 和二维码：
 
 ```bash
-./rfcjp-check.sh SERVER_IP 5432
-./rfcjp-check.sh SERVER_IP 5432/tcp 5432/udp
+sudo knockgate qr
 ```
 
-结果含义：
+使用仓库中的 Shell 客户端：
 
-- `OPEN`：TCP 握手成功；
-- `REFUSED`：路径已打开，但端口没有服务监听；
-- `FILTERED`：仍被防火墙或网络路径丢弃。
-- `UDP-SENT`：UDP 没有可靠握手，只代表探测包已发出，不能证明端口开放。
+```bash
+clients/shell/knockgate-knock.sh --url 'knockgate://import/v1?...'
+clients/shell/knockgate-knock.sh --secret BASE64URL_SECRET SERVER_IP 45669 65075 31244 20035 64168 59462
+```
+
+检查保护端口：
+
+```bash
+clients/shell/knockgate-check.sh SERVER_IP 5432
+clients/shell/knockgate-check.sh SERVER_IP 5432/tcp 5432/udp
+```
+
+TCP 检查结果：
+
+```text
+OPEN      TCP 握手成功
+REFUSED   主机可达，但端口没有服务监听
+FILTERED  连接超时
+```
+
+UDP 没有通用可靠握手。`knockgate-check.sh` 对 UDP 只能发送探测包，不能证明 UDP 端口已开放。
 
 ## Flutter 客户端
 
-[`flutter/`](flutter/) 是图形客户端，支持：
-
-- 导入 `knockgate://` URL；
-- Android/iOS/macOS 扫码导入；
-- 手动修改服务器、敲门端口、保护端口、HMAC secret；
-- 一键 UDP-HMAC 敲门；
-- 检测保护 TCP 端口；UDP 只能发送探测包，不能像 TCP 一样确认握手。
+Flutter 客户端位于 [`flutter/`](flutter/)，支持导入 URL、Android/iOS/macOS 扫码、手动编辑配置、UDP-HMAC 敲门和连通性检查。
 
 ```bash
 cd flutter
 flutter pub get
 flutter analyze
 flutter test
-flutter run -d macos
 ```
 
-## 卸载和清空
-
-卸载：
+## 卸载
 
 ```bash
 sudo knockgate uninstall
 ```
 
-只清空临时白名单：
+其他清理命令：
 
 ```bash
-sudo knockgate flush
+sudo knockgate flush   # 清空临时白名单
+sudo knockgate clear   # 删除 table inet knockgate
 ```
 
-只删除 KnockGate 自己的 nft table：
+## 安全说明
 
-```bash
-sudo knockgate clear
-```
-
-这些操作不会修改 SSH 端口规则，也不会恢复或重写 `/etc/nftables.conf`。
+- 导入 URL 和 HMAC secret 必须保密。
+- 客户端和服务端时间应保持基本同步。
+- 云厂商安全组需要允许 UDP 敲门包到达服务器。
+- 端口敲门不是 VPN，也不能替代服务自身的认证机制。
 
 ## 协议
 
