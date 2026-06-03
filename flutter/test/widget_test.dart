@@ -17,7 +17,24 @@ void main() {
       ),
       findsOneWidget,
     );
+    final appBar = tester.widget<AppBar>(find.byType(AppBar));
+    expect(appBar.backgroundColor, Colors.transparent);
+    expect(appBar.surfaceTintColor, Colors.transparent);
+    expect(appBar.shadowColor, Colors.transparent);
+    expect(appBar.forceMaterialTransparency, isTrue);
+    expect(appBar.bottom, isNull);
+    expect(find.byType(NavigationBar), findsOneWidget);
     expect(find.text('UDP knock ports'), findsOneWidget);
-    expect(find.text('Protected ports'), findsOneWidget);
+    expect(find.text('TCP ports to check'), findsNothing);
+    expect(find.text('Activity'), findsNothing);
+    expect(find.text('Ready'), findsNothing);
+    expect(find.text('Knock'), findsWidgets);
+    expect(find.text('Check'), findsWidgets);
+
+    await tester.tap(find.text('Check').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('TCP ports to check'), findsOneWidget);
+    expect(find.text('UDP knock ports'), findsNothing);
   });
 }

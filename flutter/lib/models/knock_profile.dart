@@ -113,6 +113,30 @@ class KnockProfile {
     };
   }
 
+  KnockProfile copyWith({
+    String? label,
+    String? host,
+    List<int>? knockPorts,
+    List<int>? protectedPorts,
+    String? protectedPortsText,
+    int? seqTimeoutSeconds,
+    int? hmacWindowSeconds,
+    String? openTimeout,
+    String? secret,
+  }) {
+    return KnockProfile(
+      label: label ?? this.label,
+      host: host ?? this.host,
+      knockPorts: knockPorts ?? this.knockPorts,
+      protectedPorts: protectedPorts ?? this.protectedPorts,
+      protectedPortsText: protectedPortsText ?? this.protectedPortsText,
+      seqTimeoutSeconds: seqTimeoutSeconds ?? this.seqTimeoutSeconds,
+      hmacWindowSeconds: hmacWindowSeconds ?? this.hmacWindowSeconds,
+      openTimeout: openTimeout ?? this.openTimeout,
+      secret: secret ?? this.secret,
+    );
+  }
+
   String get knockPortText => knockPorts.join(',');
   String get protectedPortText => protectedPortsText;
 

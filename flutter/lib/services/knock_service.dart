@@ -8,8 +8,7 @@ import '../models/knock_profile.dart';
 import '../utils/crypto_codec.dart';
 
 class KnockService {
-  Future<List<String>> knock(KnockProfile profile) async {
-    final events = <String>[];
+  Future<void> knock(KnockProfile profile) async {
     final address = await _resolveHost(profile.host);
     final socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
     try {
@@ -20,15 +19,11 @@ class KnockService {
             ? buildKnockPayload(profile.secret, port, step)
             : utf8.encode('KG0|$step');
         socket.send(payload, address, port);
-        events.add(
-          '${isFinal ? 'UDP-HMAC' : 'UDP'} step $step ${address.address}:$port',
-        );
         await Future<void>.delayed(const Duration(milliseconds: 250));
       }
     } finally {
       socket.close();
     }
-    return events;
   }
 }
 

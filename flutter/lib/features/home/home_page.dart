@@ -9,7 +9,7 @@ import '../scan/scan_page.dart';
 import 'home_controller.dart';
 import 'settings_page.dart';
 
-enum _HomeMenuAction { importUrl, scanQr, clearHistory, settings }
+enum _HomeMenuAction { importUrl, scanQr, clearProfile, settings }
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -20,9 +20,9 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final _importController = TextEditingController();
-  final _logController = ScrollController();
   StreamSubscription<Uri>? _linkSub;
   int _shownErrorVersion = 0;
+  int _selectedIndex = 0;
 
   @override
   void initState() {
@@ -34,7 +34,6 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _linkSub?.cancel();
     _importController.dispose();
-    _logController.dispose();
     super.dispose();
   }
 
@@ -50,11 +49,11 @@ class _HomePageState extends State<HomePage> {
         await controller.importUrl(initial.toString(), source: 'Initial link');
       }
     } catch (error) {
-      controller.append('Deep link init failed: $error');
+      _showSnack('$error');
     }
     _linkSub = appLinks.uriLinkStream.listen(
       (uri) => controller.importUrl(uri.toString(), source: 'Deep link'),
-      onError: (Object error) => controller.append('Deep link error: $error'),
+      onError: (Object error) => _showSnack('$error'),
     );
   }
 
@@ -63,38 +62,17 @@ class _HomePageState extends State<HomePage> {
     final controller = context.watch<HomeController>();
     _showPendingError(controller);
 
-    final wide = MediaQuery.sizeOf(context).width >= 900;
-    final body = wide
-        ? Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                flex: 3,
-                child: SingleChildScrollView(
-                  child: _buildConfigPanel(controller),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(flex: 2, child: _buildLogPanel(controller, fill: true)),
-            ],
-          )
-        : ListView(
-            children: [
-              _buildConfigPanel(controller),
-              const SizedBox(height: 16),
-              _buildLogPanel(controller),
-            ],
-          );
-
     return Scaffold(
       appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        shadowColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        forceMaterialTransparency: true,
         centerTitle: false,
         title: const Text('KnockGate'),
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 4),
-            child: Center(child: Text(controller.status)),
-          ),
           PopupMenuButton<_HomeMenuAction>(
             onSelected: (action) => _handleMenu(context, action),
             itemBuilder: (context) => const [
@@ -114,10 +92,10 @@ class _HomePageState extends State<HomePage> {
               ),
               PopupMenuDivider(),
               PopupMenuItem(
-                value: _HomeMenuAction.clearHistory,
+                value: _HomeMenuAction.clearProfile,
                 child: ListTile(
                   leading: Icon(Icons.clear_all),
-                  title: Text('Clear history'),
+                  title: Text('Clear'),
                 ),
               ),
               PopupMenuItem(
@@ -133,180 +111,32 @@ class _HomePageState extends State<HomePage> {
       ),
       body: SafeArea(
         top: false,
-        child: Padding(padding: const EdgeInsets.all(16), child: body),
-      ),
-    );
-  }
-
-  Widget _buildConfigPanel(HomeController controller) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text('Profile', style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 12),
-        TextField(
-          controller: controller.labelController,
-          decoration: const InputDecoration(labelText: 'Name'),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: controller.hostController,
-          decoration: const InputDecoration(labelText: 'Server host or IP'),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: controller.knockPortsController,
-          decoration: const InputDecoration(
-            labelText: 'UDP knock ports',
-            hintText: '37708,31114,25880',
-          ),
-          keyboardType: TextInputType.number,
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: controller.protectedPortsController,
-          decoration: const InputDecoration(
-            labelText: 'Protected ports',
-            hintText: '5432,9092/tcp,51820/udp',
-          ),
-        ),
-        const SizedBox(height: 12),
-        Row(
+        child: IndexedStack(
+          index: _selectedIndex,
           children: [
-            Expanded(
-              child: TextField(
-                controller: controller.seqTimeoutController,
-                decoration: const InputDecoration(labelText: 'Seq timeout'),
-                keyboardType: TextInputType.number,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: TextField(
-                controller: controller.openTimeoutController,
-                decoration: const InputDecoration(labelText: 'Open timeout'),
-              ),
-            ),
+            _KnockTab(controller: controller),
+            _CheckTab(controller: controller),
           ],
         ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: controller.hmacWindowController,
-          decoration: const InputDecoration(labelText: 'HMAC window seconds'),
-          keyboardType: TextInputType.number,
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: controller.secretController,
-          decoration: const InputDecoration(labelText: 'HMAC secret'),
-          obscureText: true,
-          enableSuggestions: false,
-          autocorrect: false,
-        ),
-        const SizedBox(height: 16),
-        _buildActionTabs(controller),
-      ],
-    );
-  }
-
-  Widget _buildActionTabs(HomeController controller) {
-    return DefaultTabController(
-      length: 2,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const TabBar(
-            tabs: [
-              Tab(icon: Icon(Icons.key), text: 'Knock'),
-              Tab(icon: Icon(Icons.sensors), text: 'Check'),
-            ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _selectedIndex,
+        onDestinationSelected: (index) {
+          setState(() => _selectedIndex = index);
+        },
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.key_outlined),
+            selectedIcon: Icon(Icons.key),
+            label: 'Knock',
           ),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 52,
-            child: TabBarView(
-              physics: const NeverScrollableScrollPhysics(),
-              children: [
-                _buildActionButton(
-                  controller,
-                  actionIcon: Icons.key,
-                  actionLabel: 'Knock',
-                  onAction: controller.knock,
-                ),
-                _buildActionButton(
-                  controller,
-                  actionIcon: Icons.sensors,
-                  actionLabel: 'Check',
-                  onAction: controller.checkConnectivity,
-                ),
-              ],
-            ),
+          NavigationDestination(
+            icon: Icon(Icons.sensors_outlined),
+            selectedIcon: Icon(Icons.sensors),
+            label: 'Check',
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildActionButton(
-    HomeController controller, {
-    required IconData actionIcon,
-    required String actionLabel,
-    required Future<void> Function() onAction,
-  }) {
-    final icon = controller.formDirty ? Icons.save : actionIcon;
-    final label = controller.formDirty ? 'Save' : actionLabel;
-    return FilledButton.icon(
-      onPressed: controller.busy
-          ? null
-          : (controller.formDirty ? controller.saveFromForm : onAction),
-      icon: Icon(icon),
-      label: Text(label),
-    );
-  }
-
-  Widget _buildLogPanel(HomeController controller, {bool fill = false}) {
-    final content = Container(
-      constraints: fill ? null : const BoxConstraints(minHeight: 220),
-      decoration: BoxDecoration(
-        border: Border.all(color: Theme.of(context).dividerColor),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: controller.events.isEmpty
-          ? const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text('No activity yet.'),
-            )
-          : ListView.separated(
-              controller: fill ? _logController : null,
-              shrinkWrap: !fill,
-              itemCount: controller.events.length,
-              separatorBuilder: (_, _) => const Divider(height: 1),
-              itemBuilder: (_, index) => Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                child: Text(controller.events[index]),
-              ),
-            ),
-    );
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Text('Activity', style: Theme.of(context).textTheme.titleLarge),
-            const Spacer(),
-            TextButton(
-              onPressed: controller.clearHistory,
-              child: const Text('Clear'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        fill ? Expanded(child: content) : content,
-      ],
     );
   }
 
@@ -317,8 +147,8 @@ class _HomePageState extends State<HomePage> {
         await _showImportDialog(controller);
       case _HomeMenuAction.scanQr:
         await _scanQr(controller);
-      case _HomeMenuAction.clearHistory:
-        await controller.clearHistory();
+      case _HomeMenuAction.clearProfile:
+        await controller.clearProfile();
       case _HomeMenuAction.settings:
         _openSettings();
     }
@@ -393,5 +223,138 @@ class _HomePageState extends State<HomePage> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+class _KnockTab extends StatelessWidget {
+  const _KnockTab({required this.controller});
+
+  final HomeController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        TextField(
+          controller: controller.labelController,
+          decoration: const InputDecoration(labelText: 'Name'),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: controller.hostController,
+          decoration: const InputDecoration(labelText: 'Server host or IP'),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: controller.knockPortsController,
+          decoration: const InputDecoration(
+            labelText: 'UDP knock ports',
+            hintText: '37708,31114,25880',
+          ),
+          keyboardType: TextInputType.number,
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: controller.seqTimeoutController,
+          decoration: const InputDecoration(labelText: 'Seq timeout'),
+          keyboardType: TextInputType.number,
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: controller.hmacWindowController,
+          decoration: const InputDecoration(labelText: 'HMAC window seconds'),
+          keyboardType: TextInputType.number,
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: controller.secretController,
+          decoration: const InputDecoration(labelText: 'HMAC secret'),
+          obscureText: true,
+          enableSuggestions: false,
+          autocorrect: false,
+        ),
+        const SizedBox(height: 16),
+        _PrimaryActionButton(
+          controller: controller,
+          dirty: controller.knockDirty,
+          icon: Icons.key,
+          label: 'Knock',
+          onSave: controller.saveKnockFromForm,
+          onPressed: controller.knock,
+        ),
+      ],
+    );
+  }
+}
+
+class _CheckTab extends StatelessWidget {
+  const _CheckTab({required this.controller});
+
+  final HomeController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        TextField(
+          controller: controller.hostController,
+          decoration: const InputDecoration(labelText: 'Server host or IP'),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: controller.protectedPortsController,
+          decoration: const InputDecoration(
+            labelText: 'TCP ports to check',
+            hintText: '5432,9092/tcp',
+          ),
+        ),
+        const SizedBox(height: 16),
+        _PrimaryActionButton(
+          controller: controller,
+          dirty: controller.checkDirty,
+          icon: Icons.sensors,
+          label: 'Check',
+          onSave: controller.saveCheckFromForm,
+          onPressed: controller.checkConnectivity,
+        ),
+        if (controller.checkResults.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          for (final result in controller.checkResults)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(result),
+            ),
+        ],
+      ],
+    );
+  }
+}
+
+class _PrimaryActionButton extends StatelessWidget {
+  const _PrimaryActionButton({
+    required this.controller,
+    required this.dirty,
+    required this.icon,
+    required this.label,
+    required this.onSave,
+    required this.onPressed,
+  });
+
+  final HomeController controller;
+  final bool dirty;
+  final IconData icon;
+  final String label;
+  final Future<void> Function() onSave;
+  final Future<void> Function() onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton.icon(
+      onPressed: controller.busy ? null : (dirty ? onSave : onPressed),
+      icon: Icon(dirty ? Icons.save : icon),
+      label: Text(dirty ? 'Save' : label),
+    );
   }
 }
