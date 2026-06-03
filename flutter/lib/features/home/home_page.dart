@@ -1,19 +1,21 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
-import '../scan/scan_page.dart';
 import 'home_controller.dart';
 import 'settings_page.dart';
 
 enum _HomeMenuAction { importUrl, scanQr, knockLogs, clearProfile, settings }
 
+typedef QrScanLauncher = Future<String?> Function(BuildContext context);
+
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  const HomePage({super.key, this.scanQr});
+
+  final QrScanLauncher? scanQr;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -63,95 +65,90 @@ class _HomePageState extends State<HomePage> {
     final controller = context.watch<HomeController>();
     _showPendingError(controller);
 
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        surfaceTintColor: Colors.transparent,
-        shadowColor: Colors.transparent,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        forceMaterialTransparency: true,
-        systemOverlayStyle: const SystemUiOverlayStyle(
-          statusBarColor: Colors.transparent,
-          statusBarIconBrightness: Brightness.dark,
-          statusBarBrightness: Brightness.light,
-          systemNavigationBarColor: Colors.transparent,
-          systemNavigationBarIconBrightness: Brightness.dark,
-        ),
-        centerTitle: false,
-        title: const Text('KnockGate'),
-        actions: [
-          PopupMenuButton<_HomeMenuAction>(
-            onSelected: (action) => _handleMenu(context, action),
-            itemBuilder: (context) => const [
-              PopupMenuItem(
-                value: _HomeMenuAction.importUrl,
-                child: ListTile(
-                  leading: Icon(Icons.download),
-                  title: Text('Import URL'),
-                ),
-              ),
-              PopupMenuItem(
-                value: _HomeMenuAction.scanQr,
-                child: ListTile(
-                  leading: Icon(Icons.qr_code_scanner),
-                  title: Text('Scan QR'),
-                ),
-              ),
-              PopupMenuItem(
-                value: _HomeMenuAction.knockLogs,
-                child: ListTile(
-                  leading: Icon(Icons.terminal),
-                  title: Text('Knock logs'),
-                ),
-              ),
-              PopupMenuDivider(),
-              PopupMenuItem(
-                value: _HomeMenuAction.clearProfile,
-                child: ListTile(
-                  leading: Icon(Icons.clear_all),
-                  title: Text('Clear'),
-                ),
-              ),
-              PopupMenuItem(
-                value: _HomeMenuAction.settings,
-                child: ListTile(
-                  leading: Icon(Icons.settings),
-                  title: Text('Settings'),
-                ),
-              ),
-            ],
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+      child: Scaffold(
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          surfaceTintColor: Colors.transparent,
+          shadowColor: Colors.transparent,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          forceMaterialTransparency: true,
+          systemOverlayStyle: const SystemUiOverlayStyle(
+            statusBarColor: Colors.transparent,
+            statusBarIconBrightness: Brightness.dark,
+            statusBarBrightness: Brightness.light,
+            systemNavigationBarColor: Colors.transparent,
+            systemNavigationBarIconBrightness: Brightness.dark,
           ),
-        ],
-      ),
-      body: SafeArea(
-        top: false,
-        bottom: false,
-        child: IndexedStack(
+          centerTitle: false,
+          title: const Text('KnockGate'),
+          actions: [
+            PopupMenuButton<_HomeMenuAction>(
+              onSelected: (action) => _handleMenu(context, action),
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: _HomeMenuAction.importUrl,
+                  child: ListTile(
+                    leading: Icon(Icons.download),
+                    title: Text('Import URL'),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: _HomeMenuAction.scanQr,
+                  child: ListTile(
+                    leading: Icon(Icons.qr_code_scanner),
+                    title: Text('Scan QR'),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: _HomeMenuAction.knockLogs,
+                  child: ListTile(
+                    leading: Icon(Icons.terminal),
+                    title: Text('Knock logs'),
+                  ),
+                ),
+                PopupMenuDivider(),
+                PopupMenuItem(
+                  value: _HomeMenuAction.clearProfile,
+                  child: ListTile(
+                    leading: Icon(Icons.clear_all),
+                    title: Text('Clear'),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: _HomeMenuAction.settings,
+                  child: ListTile(
+                    leading: Icon(Icons.settings),
+                    title: Text('Settings'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        body: IndexedStack(
           index: _selectedIndex,
           children: [_buildKnockTab(controller), _buildCheckTab(controller)],
         ),
-      ),
-      bottomNavigationBar: MediaQuery.removePadding(
-        context: context,
-        removeBottom: true,
-        child: NavigationBar(
-          selectedIndex: _selectedIndex,
-          onDestinationSelected: (index) {
-            setState(() => _selectedIndex = index);
-          },
-          destinations: const [
-            NavigationDestination(
-              icon: Icon(Icons.key_outlined),
-              selectedIcon: Icon(Icons.key),
-              label: 'Knock',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.sensors_outlined),
-              selectedIcon: Icon(Icons.sensors),
-              label: 'Check',
-            ),
-          ],
+        bottomNavigationBar: MediaQuery.removePadding(
+          context: context,
+          removeBottom: true,
+          child: BottomNavigationBar(
+            currentIndex: _selectedIndex,
+            onTap: (index) {
+              setState(() => _selectedIndex = index);
+            },
+            items: const [
+              BottomNavigationBarItem(icon: Icon(Icons.key), label: 'Knock'),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.sensors),
+                label: 'Check',
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -205,15 +202,14 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _scanQr(HomeController controller) async {
-    if (!Platform.isAndroid && !Platform.isIOS && !Platform.isMacOS) {
+    final scanQr = widget.scanQr;
+    if (scanQr == null) {
       _showSnack(
-        'QR scanning is available on Android, iOS, and macOS. Paste the import URL on this platform.',
+        'QR scanning is not available in this build. Paste the import URL instead.',
       );
       return;
     }
-    final scanned = await Navigator.of(
-      context,
-    ).push<String>(MaterialPageRoute(builder: (_) => const ScanPage()));
+    final scanned = await scanQr(context);
     if (scanned != null && scanned.trim().isNotEmpty) {
       await controller.importUrl(scanned, source: 'QR');
     }
@@ -246,6 +242,7 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildKnockTab(HomeController controller) {
     return ListView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.all(16),
       children: [
         TextField(
@@ -264,7 +261,9 @@ class _HomePageState extends State<HomePage> {
             labelText: 'UDP knock ports',
             hintText: '37708,31114,25880',
           ),
-          keyboardType: TextInputType.number,
+          keyboardType: TextInputType.multiline,
+          minLines: 1,
+          maxLines: 3,
         ),
         const SizedBox(height: 12),
         TextField(
@@ -301,6 +300,7 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildCheckTab(HomeController controller) {
     return ListView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.all(16),
       children: [
         TextField(
@@ -314,6 +314,9 @@ class _HomePageState extends State<HomePage> {
             labelText: 'TCP ports to check',
             hintText: '5432,9092/tcp',
           ),
+          keyboardType: TextInputType.multiline,
+          minLines: 1,
+          maxLines: 3,
         ),
         const SizedBox(height: 16),
         _buildPrimaryActionButton(

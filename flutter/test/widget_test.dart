@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:knockgate_client/main.dart';
+import 'package:knockgate_client/app/knockgate_app.dart';
 
 void main() {
   testWidgets('KnockGate home screen renders', (WidgetTester tester) async {
@@ -26,7 +26,7 @@ void main() {
     expect(appBar.systemOverlayStyle?.statusBarIconBrightness, Brightness.dark);
     expect(appBar.systemOverlayStyle?.statusBarBrightness, Brightness.light);
     expect(appBar.bottom, isNull);
-    expect(find.byType(NavigationBar), findsOneWidget);
+    expect(find.byType(BottomNavigationBar), findsOneWidget);
     expect(find.text('UDP knock ports'), findsOneWidget);
     expect(find.text('TCP ports to check'), findsNothing);
     expect(find.text('Activity'), findsNothing);
@@ -81,7 +81,27 @@ void main() {
     expect(find.text('No knock logs yet.'), findsOneWidget);
   });
 
-  testWidgets('Bottom navigation removes bottom safe area', (
+  testWidgets('Scanner menu falls back when scanner is not bundled', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(const KnockGateApp());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Scan QR'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'QR scanning is not available in this build. Paste the import URL instead.',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('Bottom tab removes bottom safe area', (
     WidgetTester tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
@@ -93,7 +113,27 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final navigationContext = tester.element(find.byType(NavigationBar));
+    final navigationContext = tester.element(find.byType(BottomNavigationBar));
     expect(MediaQuery.paddingOf(navigationContext).bottom, 0);
+  });
+
+  testWidgets('Tapping blank space dismisses focused text field', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(const KnockGateApp());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(TextField, 'Name'));
+    await tester.pump();
+    expect(FocusManager.instance.primaryFocus, isNotNull);
+
+    await tester.tapAt(const Offset(390, 420));
+    await tester.pumpAndSettle();
+
+    expect(
+      FocusManager.instance.primaryFocus?.context?.widget,
+      isNot(isA<EditableText>()),
+    );
   });
 }

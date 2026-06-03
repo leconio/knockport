@@ -8,7 +8,9 @@ import '../services/knock_service.dart';
 import '../services/profile_store.dart';
 
 class KnockGateApp extends StatelessWidget {
-  const KnockGateApp({super.key});
+  const KnockGateApp({super.key, this.scanQr});
+
+  final QrScanLauncher? scanQr;
 
   @override
   Widget build(BuildContext context) {
@@ -32,7 +34,7 @@ class KnockGateApp extends StatelessWidget {
             isDense: true,
           ),
         ),
-        home: const HomePage(),
+        home: HomePage(scanQr: scanQr),
       ),
     );
   }

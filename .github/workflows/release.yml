@@ -10,8 +10,8 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build ${{ matrix.goarch }}
+  build-go:
+    name: Build Go server ${{ matrix.goarch }}
     strategy:
       fail-fast: false
       matrix:
@@ -42,14 +42,156 @@ jobs:
         run: ./scripts/build-release.sh "${GITHUB_REF_NAME:-dev}"
       - uses: actions/upload-artifact@v4
         with:
-          name: knockgate-linux-${{ matrix.goarch }}
+          name: knockgate-server-linux-${{ matrix.goarch }}
           path: |
             dist/knockgate_linux_${{ matrix.goarch }}.tar.gz
             dist/knockgate_linux_${{ matrix.goarch }}.tar.gz.sha256
 
+  flutter-android:
+    name: Build Flutter Android
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Get Flutter dependencies
+        working-directory: flutter
+        run: flutter pub get
+      - name: Analyze and test Flutter client
+        working-directory: flutter
+        run: |
+          flutter analyze
+          flutter test
+      - name: Build Android APK
+        working-directory: flutter
+        run: flutter build apk --release
+      - name: Package Android APK
+        run: |
+          mkdir -p dist
+          cp flutter/build/app/outputs/flutter-apk/app-release.apk dist/knockgate_client_android.apk
+          (cd dist && sha256sum knockgate_client_android.apk > knockgate_client_android.apk.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: knockgate-client-android
+          path: |
+            dist/knockgate_client_android.apk
+            dist/knockgate_client_android.apk.sha256
+
+  flutter-windows:
+    name: Build Flutter Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Get Flutter dependencies
+        working-directory: flutter
+        run: flutter pub get
+      - name: Enable Windows desktop
+        working-directory: flutter
+        run: flutter config --enable-windows-desktop
+      - name: Build Windows app without scanner plugin entrypoint
+        working-directory: flutter
+        run: flutter build windows --release -t lib/main_no_scanner.dart
+      - name: Package Windows app
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "flutter\build\windows\x64\runner\Release\*" -DestinationPath "dist\knockgate_client_windows_x64.zip" -Force
+          $hash = Get-FileHash -Algorithm SHA256 "dist\knockgate_client_windows_x64.zip"
+          "$($hash.Hash.ToLower())  knockgate_client_windows_x64.zip" | Out-File -Encoding ASCII "dist\knockgate_client_windows_x64.zip.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: knockgate-client-windows-x64
+          path: |
+            dist/knockgate_client_windows_x64.zip
+            dist/knockgate_client_windows_x64.zip.sha256
+
+  flutter-linux:
+    name: Build Flutter Linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Get Flutter dependencies
+        working-directory: flutter
+        run: flutter pub get
+      - name: Enable Linux desktop
+        working-directory: flutter
+        run: flutter config --enable-linux-desktop
+      - name: Build Linux app without scanner plugin entrypoint
+        working-directory: flutter
+        run: flutter build linux --release -t lib/main_no_scanner.dart
+      - name: Package Linux app
+        run: |
+          mkdir -p dist
+          tar -C flutter/build/linux/x64/release/bundle -czf dist/knockgate_client_linux_x64.tar.gz .
+          (cd dist && sha256sum knockgate_client_linux_x64.tar.gz > knockgate_client_linux_x64.tar.gz.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: knockgate-client-linux-x64
+          path: |
+            dist/knockgate_client_linux_x64.tar.gz
+            dist/knockgate_client_linux_x64.tar.gz.sha256
+
+  flutter-macos:
+    name: Build Flutter macOS
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Get Flutter dependencies
+        working-directory: flutter
+        run: flutter pub get
+      - name: Enable macOS desktop
+        working-directory: flutter
+        run: flutter config --enable-macos-desktop
+      - name: Build macOS app
+        working-directory: flutter
+        run: flutter build macos --release
+      - name: Package macOS app
+        run: |
+          mkdir -p dist
+          APP_PATH="$(find flutter/build/macos/Build/Products/Release -maxdepth 1 -name '*.app' -print -quit)"
+          if [ -z "$APP_PATH" ]; then
+            echo "No macOS .app bundle found" >&2
+            exit 1
+          fi
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" dist/knockgate_client_macos.zip
+          (cd dist && shasum -a 256 knockgate_client_macos.zip > knockgate_client_macos.zip.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: knockgate-client-macos
+          path: |
+            dist/knockgate_client_macos.zip
+            dist/knockgate_client_macos.zip.sha256
+
   release:
     name: Publish GitHub release
-    needs: build
+    needs:
+      - build-go
+      - flutter-android
+      - flutter-windows
+      - flutter-linux
+      - flutter-macos
     runs-on: ubuntu-24.04
     if: startsWith(github.ref, 'refs/tags/')
     steps:
@@ -63,8 +205,5 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/knockgate_linux_amd64.tar.gz
-            dist/knockgate_linux_amd64.tar.gz.sha256
-            dist/knockgate_linux_arm64.tar.gz
-            dist/knockgate_linux_arm64.tar.gz.sha256
+            dist/*
             clients/shell/knockgate-knock.sh
