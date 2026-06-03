@@ -22,6 +22,9 @@ void main() {
     expect(appBar.surfaceTintColor, Colors.transparent);
     expect(appBar.shadowColor, Colors.transparent);
     expect(appBar.forceMaterialTransparency, isTrue);
+    expect(appBar.systemOverlayStyle?.statusBarColor, Colors.transparent);
+    expect(appBar.systemOverlayStyle?.statusBarIconBrightness, Brightness.dark);
+    expect(appBar.systemOverlayStyle?.statusBarBrightness, Brightness.light);
     expect(appBar.bottom, isNull);
     expect(find.byType(NavigationBar), findsOneWidget);
     expect(find.text('UDP knock ports'), findsOneWidget);

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../scan/scan_page.dart';
@@ -70,6 +71,13 @@ class _HomePageState extends State<HomePage> {
         elevation: 0,
         scrolledUnderElevation: 0,
         forceMaterialTransparency: true,
+        systemOverlayStyle: const SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.dark,
+          statusBarBrightness: Brightness.light,
+          systemNavigationBarColor: Colors.transparent,
+          systemNavigationBarIconBrightness: Brightness.dark,
+        ),
         centerTitle: false,
         title: const Text('KnockGate'),
         actions: [
@@ -113,10 +121,7 @@ class _HomePageState extends State<HomePage> {
         top: false,
         child: IndexedStack(
           index: _selectedIndex,
-          children: [
-            _KnockTab(controller: controller),
-            _CheckTab(controller: controller),
-          ],
+          children: [_buildKnockTab(controller), _buildCheckTab(controller)],
         ),
       ),
       bottomNavigationBar: NavigationBar(
@@ -224,15 +229,8 @@ class _HomePageState extends State<HomePage> {
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
   }
-}
 
-class _KnockTab extends StatelessWidget {
-  const _KnockTab({required this.controller});
-
-  final HomeController controller;
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildKnockTab(HomeController controller) {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -275,7 +273,7 @@ class _KnockTab extends StatelessWidget {
           autocorrect: false,
         ),
         const SizedBox(height: 16),
-        _PrimaryActionButton(
+        _buildPrimaryActionButton(
           controller: controller,
           dirty: controller.knockDirty,
           icon: Icons.key,
@@ -286,15 +284,8 @@ class _KnockTab extends StatelessWidget {
       ],
     );
   }
-}
 
-class _CheckTab extends StatelessWidget {
-  const _CheckTab({required this.controller});
-
-  final HomeController controller;
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildCheckTab(HomeController controller) {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -311,7 +302,7 @@ class _CheckTab extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 16),
-        _PrimaryActionButton(
+        _buildPrimaryActionButton(
           controller: controller,
           dirty: controller.checkDirty,
           icon: Icons.sensors,
@@ -330,27 +321,15 @@ class _CheckTab extends StatelessWidget {
       ],
     );
   }
-}
 
-class _PrimaryActionButton extends StatelessWidget {
-  const _PrimaryActionButton({
-    required this.controller,
-    required this.dirty,
-    required this.icon,
-    required this.label,
-    required this.onSave,
-    required this.onPressed,
-  });
-
-  final HomeController controller;
-  final bool dirty;
-  final IconData icon;
-  final String label;
-  final Future<void> Function() onSave;
-  final Future<void> Function() onPressed;
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildPrimaryActionButton({
+    required HomeController controller,
+    required bool dirty,
+    required IconData icon,
+    required String label,
+    required Future<void> Function() onSave,
+    required Future<void> Function() onPressed,
+  }) {
     return FilledButton.icon(
       onPressed: controller.busy ? null : (dirty ? onSave : onPressed),
       icon: Icon(dirty ? Icons.save : icon),
