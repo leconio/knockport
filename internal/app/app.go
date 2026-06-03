@@ -307,7 +307,7 @@ func Menu() error {
 		fmt.Println(ui.T("6. 查看临时白名单", "6. Show temporary allowlist"))
 		fmt.Println(ui.T("7. 添加 IP 到临时白名单", "7. Add IP to temporary allowlist"))
 		fmt.Println(ui.T("8. 清空临时白名单", "8. Flush temporary allowlist"))
-		fmt.Println(ui.T("9. 重载 KnockGate 规则", "9. Reload KnockGate rules"))
+		fmt.Println(ui.T("9. 重新加载 KnockGate 规则（清空临时白名单）", "9. Reload KnockGate rules (flush temporary allowlist)"))
 		fmt.Println(ui.T("10. 清空 KnockGate 防火墙表", "10. Clear KnockGate firewall table"))
 		fmt.Println(ui.T("11. 生成客户端导入二维码", "11. Generate client import QR"))
 		fmt.Println(ui.T("12. 卸载", "12. Uninstall"))
@@ -330,7 +330,9 @@ func Menu() error {
 		case "8":
 			_ = FlushAllowlist()
 		case "9":
-			_ = Reload()
+			if ui.Confirm(ui.T("重新加载只会重建 KnockGate 自己的 nft 表，但会清空临时白名单。继续？", "Reload only rebuilds KnockGate's own nft table, but it flushes the temporary allowlist. Continue?"), false) {
+				_ = Reload()
+			}
 		case "10":
 			_ = ClearTable()
 		case "11":

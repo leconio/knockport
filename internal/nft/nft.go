@@ -17,6 +17,8 @@ const (
 	Set    = "knock_allow_temp_v4"
 )
 
+var ErrTableMissing = errors.New("knockgate nft table missing")
+
 // WriteConfig 只渲染 KnockGate 自己的 table，不写 /etc/nftables.conf。
 func WriteConfig(cfg config.Config) error {
 	if err := os.MkdirAll(config.Dir, 0700); err != nil {
@@ -114,13 +116,25 @@ func ClearTable() error {
 }
 
 func ShowTable() error {
-	_, err := Stream("nft", "list", "table", Family, Table)
-	return err
+	out, err := Run("nft", "list", "table", Family, Table)
+	if err != nil {
+		fmt.Println("KnockGate nft 表当前不存在。请运行：sudo knockgate update")
+		fmt.Println("KnockGate nft table is missing. Run: sudo knockgate update")
+		return ErrTableMissing
+	}
+	fmt.Print(out)
+	return nil
 }
 
 func ShowAllowlist() error {
-	_, err := Stream("nft", "list", "set", Family, Table, Set)
-	return err
+	out, err := Run("nft", "list", "set", Family, Table, Set)
+	if err != nil {
+		fmt.Println("KnockGate 临时白名单当前不存在。请运行：sudo knockgate update")
+		fmt.Println("KnockGate temporary allowlist is missing. Run: sudo knockgate update")
+		return ErrTableMissing
+	}
+	fmt.Print(out)
+	return nil
 }
 
 func Run(name string, args ...string) (string, error) {
