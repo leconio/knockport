@@ -8,7 +8,7 @@ ORDINARY_PORT="${ORDINARY_PORT:-15555}"
 usage() {
     cat <<EOF
 Usage:
-  $(basename "$0") SERVER [PORT ...]
+  $(basename "$0") [--verbose] SERVER [PORT ...]
 
 Check KnockGate connectivity only. This script does not send a knock sequence.
 Run it before and after the knock script to compare behavior.
@@ -28,14 +28,42 @@ Examples:
   $(basename "$0") SERVER_IP
   $(basename "$0") SERVER_IP 12345
   $(basename "$0") SERVER_IP 22 80 443 5432
+  $(basename "$0") --verbose SERVER_IP 5432
   SSH_PORT=2222 PROTECTED_PORT=5432 $(basename "$0") example.com
+
+Results:
+  OPEN      TCP handshake succeeded. A service is reachable.
+  REFUSED   Firewall likely allowed the path, but no service is listening.
+  FILTERED  Connection timed out. Firewall or network path is dropping.
+  FAILED    nc returned another error.
 EOF
 }
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-    usage
-    exit 0
-fi
+VERBOSE=0
+while [[ "$#" -gt 0 ]]; do
+    case "${1}" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -v|--verbose)
+            VERBOSE=1
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "Unknown option: ${1}" >&2
+            usage >&2
+            exit 2
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
 
 if [[ "$#" -lt 1 ]]; then
     usage >&2
@@ -54,31 +82,32 @@ try_tcp() {
     local port="$2"
     local output
 
-    echo
-    echo "== ${label}: ${SERVER}:${port}/tcp =="
     set +e
     output="$(nc -vz -w2 "${SERVER}" "${port}" 2>&1)"
     local rc=$?
     set -e
-    printf '%s\n' "${output}"
+
+    if [[ "${VERBOSE}" -eq 1 ]]; then
+        echo
+        echo "== ${label}: ${SERVER}:${port}/tcp =="
+        printf '%s\n' "${output}"
+    fi
 
     if [[ "${rc}" -eq 0 ]]; then
-        echo "RESULT: OPEN, TCP handshake succeeded."
+        echo "OPEN ${SERVER}:${port}/tcp"
     elif printf '%s\n' "${output}" | grep -qi "refused"; then
-        echo "RESULT: REJECTED/REFUSED, firewall likely allowed it but no service is listening."
+        echo "REFUSED ${SERVER}:${port}/tcp"
     elif printf '%s\n' "${output}" | grep -Eqi "timed out|timeout|Operation now in progress"; then
-        echo "RESULT: FILTERED/TIMEOUT, firewall is dropping or network path is filtering."
+        echo "FILTERED ${SERVER}:${port}/tcp"
     else
-        echo "RESULT: FAILED, see nc output above."
+        echo "FAILED ${SERVER}:${port}/tcp"
+        if [[ "${VERBOSE}" -eq 0 ]]; then
+            printf '%s\n' "${output}" >&2
+        fi
     fi
 }
 
-echo "KnockGate connectivity check"
-echo "This script does not send knock packets."
-echo "Server: ${SERVER}"
-
 if [[ "$#" -gt 0 ]]; then
-    echo "Mode: custom port check"
     for port in "$@"; do
         if ! is_port "${port}"; then
             echo "Invalid port: ${port}" >&2
@@ -87,24 +116,16 @@ if [[ "$#" -gt 0 ]]; then
         try_tcp "Custom port check" "${port}"
     done
 else
-    echo "Mode: default KnockGate check"
-    echo "SSH exception port: ${SSH_PORT}"
-    echo "Protected port: ${PROTECTED_PORT}"
-    echo "Ordinary unlisted port: ${ORDINARY_PORT}"
+    if [[ "${VERBOSE}" -eq 1 ]]; then
+        echo "KnockGate connectivity check"
+        echo "This script does not send knock packets."
+        echo "Server: ${SERVER}"
+        echo "SSH exception port: ${SSH_PORT}"
+        echo "Protected port: ${PROTECTED_PORT}"
+        echo "Ordinary unlisted port: ${ORDINARY_PORT}"
+    fi
 
-    try_tcp "SSH exception should be reachable" "${SSH_PORT}"
-    try_tcp "Ordinary unlisted port should be filtered" "${ORDINARY_PORT}"
-    try_tcp "Protected port current state" "${PROTECTED_PORT}"
+    try_tcp "SSH exception" "${SSH_PORT}"
+    try_tcp "Ordinary unlisted port" "${ORDINARY_PORT}"
+    try_tcp "Protected port" "${PROTECTED_PORT}"
 fi
-
-cat <<'EOF'
-
-Interpretation:
-- SSH exception should be OPEN.
-- Ordinary unlisted port should be FILTERED/TIMEOUT.
-- Before knock, protected port should be FILTERED/TIMEOUT.
-- After a successful knock, protected port should be OPEN or REFUSED:
-  - OPEN means a service is listening and firewall opened.
-  - REFUSED means firewall opened, but no service is listening on that port.
-  - FILTERED/TIMEOUT means knock did not open the allowlist from this network path.
-EOF
