@@ -38,6 +38,7 @@ class HomeController extends ChangeNotifier {
   String? lastError;
   int errorVersion = 0;
   List<String> checkResults = const <String>[];
+  List<String> knockLogs = const <String>[];
 
   bool _syncingProfile = false;
 
@@ -186,6 +187,19 @@ class HomeController extends ChangeNotifier {
     }, rethrowErrors: onLog != null);
   }
 
+  void addKnockLog(String message) {
+    final now = DateTime.now();
+    final stamp =
+        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
+    knockLogs = <String>['[$stamp] $message', ...knockLogs].take(120).toList();
+    notifyListeners();
+  }
+
+  void clearKnockLogs() {
+    knockLogs = const <String>[];
+    notifyListeners();
+  }
+
   Future<void> checkConnectivity() async {
     await _runBusy(() async {
       final nextProfile = readCheckForm();
@@ -211,6 +225,7 @@ class HomeController extends ChangeNotifier {
     final defaults = KnockProfile.defaults();
     setProfile(defaults, notify: false);
     checkResults = const <String>[];
+    knockLogs = const <String>[];
     await store.saveProfile(defaults);
     notifyListeners();
   }

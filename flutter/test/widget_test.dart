@@ -52,8 +52,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Knock logs'), findsOneWidget);
-    expect(find.text('Starting knock'), findsOneWidget);
-    expect(find.text('Failed'), findsOneWidget);
+    expect(find.textContaining('Starting knock'), findsOneWidget);
+    expect(find.textContaining('Failed'), findsOneWidget);
     expect(find.byIcon(Icons.close), findsOneWidget);
 
     final material = tester.widget<Material>(
@@ -65,6 +65,20 @@ void main() {
           .first,
     );
     expect(material.color, Colors.black);
+  });
+
+  testWidgets('More menu opens knock log sheet', (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(const KnockGateApp());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Knock logs'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Knock logs'), findsOneWidget);
+    expect(find.text('No knock logs yet.'), findsOneWidget);
   });
 
   testWidgets('Bottom navigation removes bottom safe area', (

@@ -51,4 +51,17 @@ void main() {
     expect(restored.knockPortsController.text, '45669,65075,31244');
     expect(restored.protectedPortsController.text, '5432,9092/tcp');
   });
+
+  test('knock logs keep newest item first', () async {
+    SharedPreferences.setMockInitialValues({});
+    final controller = buildController();
+    addTearDown(controller.dispose);
+
+    await controller.init();
+    controller.addKnockLog('first');
+    controller.addKnockLog('second');
+
+    expect(controller.knockLogs.first, contains('second'));
+    expect(controller.knockLogs.last, contains('first'));
+  });
 }

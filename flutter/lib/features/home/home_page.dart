@@ -10,7 +10,7 @@ import '../scan/scan_page.dart';
 import 'home_controller.dart';
 import 'settings_page.dart';
 
-enum _HomeMenuAction { importUrl, scanQr, clearProfile, settings }
+enum _HomeMenuAction { importUrl, scanQr, knockLogs, clearProfile, settings }
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -98,6 +98,13 @@ class _HomePageState extends State<HomePage> {
                   title: Text('Scan QR'),
                 ),
               ),
+              PopupMenuItem(
+                value: _HomeMenuAction.knockLogs,
+                child: ListTile(
+                  leading: Icon(Icons.terminal),
+                  title: Text('Knock logs'),
+                ),
+              ),
               PopupMenuDivider(),
               PopupMenuItem(
                 value: _HomeMenuAction.clearProfile,
@@ -157,6 +164,8 @@ class _HomePageState extends State<HomePage> {
         await _showImportDialog(controller);
       case _HomeMenuAction.scanQr:
         await _scanQr(controller);
+      case _HomeMenuAction.knockLogs:
+        await _showKnockSheet(controller);
       case _HomeMenuAction.clearProfile:
         await controller.clearProfile();
       case _HomeMenuAction.settings:
@@ -284,7 +293,7 @@ class _HomePageState extends State<HomePage> {
           icon: Icons.key,
           label: 'Knock',
           onSave: controller.saveKnockFromForm,
-          onPressed: () => _showKnockSheet(controller),
+          onPressed: () => _showKnockSheet(controller, startKnock: true),
         ),
       ],
     );
@@ -342,8 +351,10 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Future<void> _showKnockSheet(HomeController controller) async {
-    final logs = ValueNotifier<List<String>>(<String>['Starting knock']);
+  Future<void> _showKnockSheet(
+    HomeController controller, {
+    bool startKnock = false,
+  }) async {
     final running = ValueNotifier<bool>(true);
     final error = ValueNotifier<String?>(null);
     var sheetClosed = false;
@@ -352,7 +363,7 @@ class _HomePageState extends State<HomePage> {
       if (sheetClosed) {
         return;
       }
-      logs.value = <String>[...logs.value, message];
+      controller.addKnockLog(message);
     }
 
     void setRunning(bool value) {
@@ -417,20 +428,31 @@ class _HomePageState extends State<HomePage> {
                     ),
                     const SizedBox(height: 12),
                     Expanded(
-                      child: ValueListenableBuilder<List<String>>(
-                        valueListenable: logs,
-                        builder: (context, value, _) => ListView.separated(
-                          itemCount: value.length,
-                          separatorBuilder: (_, _) =>
-                              const Divider(color: Colors.white24, height: 1),
-                          itemBuilder: (context, index) => Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            child: Text(
-                              value[index],
-                              style: const TextStyle(color: Colors.white),
+                      child: Consumer<HomeController>(
+                        builder: (context, value, _) {
+                          final logs = value.knockLogs;
+                          if (logs.isEmpty) {
+                            return const Center(
+                              child: Text(
+                                'No knock logs yet.',
+                                style: TextStyle(color: Colors.white70),
+                              ),
+                            );
+                          }
+                          return ListView.separated(
+                            itemCount: logs.length,
+                            reverse: false,
+                            separatorBuilder: (_, _) =>
+                                const Divider(color: Colors.white24, height: 1),
+                            itemBuilder: (context, index) => Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              child: Text(
+                                logs[index],
+                                style: const TextStyle(color: Colors.white),
+                              ),
                             ),
-                          ),
-                        ),
+                          );
+                        },
                       ),
                     ),
                     ValueListenableBuilder<String?>(
@@ -458,18 +480,24 @@ class _HomePageState extends State<HomePage> {
         },
       ).whenComplete(() {
         sheetClosed = true;
-        logs.dispose();
         running.dispose();
         error.dispose();
       }),
     );
 
+    if (!startKnock) {
+      setRunning(false);
+      return;
+    }
+
     await Future<void>.delayed(Duration.zero);
     try {
+      controller.clearKnockLogs();
+      addLog('Starting knock');
       await controller.knock(onLog: addLog);
-      addLog('Success');
+      addLog('Success. Closing in 3 seconds.');
       setRunning(false);
-      await Future<void>.delayed(const Duration(milliseconds: 450));
+      await Future<void>.delayed(const Duration(seconds: 3));
       closeSheet();
     } catch (exception) {
       addLog('Failed');
