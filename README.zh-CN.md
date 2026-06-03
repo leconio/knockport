@@ -103,17 +103,15 @@ sudo knockgate
 提交到 GitHub 后的一键安装命令模板：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/knockgate.sh -o /tmp/knockgate.sh \
+curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/knockgate.sh -o /tmp/knockgate.sh \
   && chmod +x /tmp/knockgate.sh \
   && sudo /tmp/knockgate.sh
 ```
 
-把 `OWNER/REPO` 替换为你的 GitHub 仓库。
-
 使用安装器脚本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/install.sh | sudo KNOCKGATE_REPO=OWNER/REPO bash
+curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh | sudo KNOCKGATE_REPO=leconio/knockport bash
 ```
 
 Fork 或自建 raw 文件地址时：

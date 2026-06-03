@@ -103,17 +103,15 @@ sudo knockgate
 One-line install after publishing to GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/knockgate.sh -o /tmp/knockgate.sh \
+curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/knockgate.sh -o /tmp/knockgate.sh \
   && chmod +x /tmp/knockgate.sh \
   && sudo /tmp/knockgate.sh
 ```
 
-Replace `OWNER/REPO` with your GitHub repository.
-
 Installer script form:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/install.sh | sudo KNOCKGATE_REPO=OWNER/REPO bash
+curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh | sudo KNOCKGATE_REPO=leconio/knockport bash
 ```
 
 For forks or self-hosted raw file URLs:
