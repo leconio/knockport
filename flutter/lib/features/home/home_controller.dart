@@ -177,13 +177,13 @@ class HomeController extends ChangeNotifier {
     }
   }
 
-  Future<void> knock() async {
+  Future<void> knock({KnockLogSink? onLog}) async {
     await _runBusy(() async {
       final nextProfile = readKnockForm();
       setProfile(nextProfile, notify: false);
       await store.saveProfile(nextProfile);
-      await knockService.knock(nextProfile);
-    });
+      await knockService.knock(nextProfile, onLog: onLog);
+    }, rethrowErrors: onLog != null);
   }
 
   Future<void> checkConnectivity() async {
@@ -215,7 +215,10 @@ class HomeController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _runBusy(Future<void> Function() work) async {
+  Future<void> _runBusy(
+    Future<void> Function() work, {
+    bool rethrowErrors = false,
+  }) async {
     if (busy) {
       return;
     }
@@ -225,6 +228,9 @@ class HomeController extends ChangeNotifier {
       await work();
     } catch (error) {
       _reportError(error, notify: false);
+      if (rethrowErrors) {
+        rethrow;
+      }
     } finally {
       busy = false;
       notifyListeners();

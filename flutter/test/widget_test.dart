@@ -40,4 +40,30 @@ void main() {
     expect(find.text('TCP ports to check'), findsOneWidget);
     expect(find.text('UDP knock ports'), findsNothing);
   });
+
+  testWidgets('Knock failure keeps log sheet open', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(const KnockGateApp());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Knock'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Knock logs'), findsOneWidget);
+    expect(find.text('Starting knock'), findsOneWidget);
+    expect(find.text('Failed'), findsOneWidget);
+    expect(find.byIcon(Icons.close), findsOneWidget);
+
+    final material = tester.widget<Material>(
+      find
+          .ancestor(
+            of: find.text('Knock logs'),
+            matching: find.byType(Material),
+          )
+          .first,
+    );
+    expect(material.color, Colors.black);
+  });
 }

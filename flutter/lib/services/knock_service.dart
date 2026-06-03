@@ -7,22 +7,32 @@ import 'package:crypto/crypto.dart';
 import '../models/knock_profile.dart';
 import '../utils/crypto_codec.dart';
 
+typedef KnockLogSink = void Function(String message);
+
 class KnockService {
-  Future<void> knock(KnockProfile profile) async {
+  Future<void> knock(KnockProfile profile, {KnockLogSink? onLog}) async {
+    onLog?.call('Resolving ${profile.host}');
     final address = await _resolveHost(profile.host);
+    onLog?.call('Resolved ${profile.host} -> ${address.address}');
+    onLog?.call('Opening UDP socket');
     final socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
     try {
       for (var step = 0; step < profile.knockPorts.length; step++) {
         final port = profile.knockPorts[step];
         final isFinal = step == profile.knockPorts.length - 1;
+        onLog?.call(
+          'Step ${step + 1}/${profile.knockPorts.length}: ${address.address}:$port/udp${isFinal ? ' with HMAC' : ''}',
+        );
         final payload = isFinal
             ? buildKnockPayload(profile.secret, port, step)
             : utf8.encode('KG0|$step');
         socket.send(payload, address, port);
         await Future<void>.delayed(const Duration(milliseconds: 250));
       }
+      onLog?.call('Knock sequence sent');
     } finally {
       socket.close();
+      onLog?.call('UDP socket closed');
     }
   }
 }

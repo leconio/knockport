@@ -279,7 +279,7 @@ class _HomePageState extends State<HomePage> {
           icon: Icons.key,
           label: 'Knock',
           onSave: controller.saveKnockFromForm,
-          onPressed: controller.knock,
+          onPressed: () => _showKnockSheet(controller),
         ),
       ],
     );
@@ -335,5 +335,141 @@ class _HomePageState extends State<HomePage> {
       icon: Icon(dirty ? Icons.save : icon),
       label: Text(dirty ? 'Save' : label),
     );
+  }
+
+  Future<void> _showKnockSheet(HomeController controller) async {
+    final logs = ValueNotifier<List<String>>(<String>['Starting knock']);
+    final running = ValueNotifier<bool>(true);
+    final error = ValueNotifier<String?>(null);
+    var sheetClosed = false;
+
+    void addLog(String message) {
+      if (sheetClosed) {
+        return;
+      }
+      logs.value = <String>[...logs.value, message];
+    }
+
+    void setRunning(bool value) {
+      if (!sheetClosed) {
+        running.value = value;
+      }
+    }
+
+    void setError(String message) {
+      if (!sheetClosed) {
+        error.value = message;
+      }
+    }
+
+    void closeSheet() {
+      if (sheetClosed || !mounted) {
+        return;
+      }
+      sheetClosed = true;
+      Navigator.of(context).pop();
+    }
+
+    unawaited(
+      showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.black,
+        barrierColor: Colors.black54,
+        builder: (sheetContext) {
+          return SafeArea(
+            child: FractionallySizedBox(
+              heightFactor: 0.56,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.key, color: Colors.white),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'Knock logs',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.of(sheetContext).pop(),
+                          icon: const Icon(Icons.close, color: Colors.white),
+                        ),
+                      ],
+                    ),
+                    ValueListenableBuilder<bool>(
+                      valueListenable: running,
+                      builder: (context, value, _) => value
+                          ? const LinearProgressIndicator()
+                          : const SizedBox(height: 4),
+                    ),
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child: ValueListenableBuilder<List<String>>(
+                        valueListenable: logs,
+                        builder: (context, value, _) => ListView.separated(
+                          itemCount: value.length,
+                          separatorBuilder: (_, _) =>
+                              const Divider(color: Colors.white24, height: 1),
+                          itemBuilder: (context, index) => Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: Text(
+                              value[index],
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    ValueListenableBuilder<String?>(
+                      valueListenable: error,
+                      builder: (context, value, _) {
+                        if (value == null) {
+                          return const SizedBox.shrink();
+                        }
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: Text(
+                            value,
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ).whenComplete(() {
+        sheetClosed = true;
+        logs.dispose();
+        running.dispose();
+        error.dispose();
+      }),
+    );
+
+    await Future<void>.delayed(Duration.zero);
+    try {
+      await controller.knock(onLog: addLog);
+      addLog('Success');
+      setRunning(false);
+      await Future<void>.delayed(const Duration(milliseconds: 450));
+      closeSheet();
+    } catch (exception) {
+      addLog('Failed');
+      setError('$exception');
+      setRunning(false);
+    }
   }
 }
