@@ -320,7 +320,6 @@ UDP 没有通用可靠握手。客户端对 UDP 只能发送探测包，不能�
 
 Flutter 客户端位于 [`flutter/`](flutter/)，支持导入 URL、Android/iOS/macOS 扫码、手动编辑配置、UDP-HMAC 敲门、连通性检查，以及可选的 App 打开时自动刷新。自动刷新会根据当前公网 IP 和 `open_timeout` 判断是否需要重新敲门。
 
-![KnockGate 展示图](docs/images/knockgate-hero.jpg)
 
 ```bash
 cd flutter
