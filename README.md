@@ -24,11 +24,11 @@ It uses UDP port sequences captured with `libpcap`, validates the final packet w
 
 ## Usage
 
-- Server quick start: [Quick Start](#quick-start)
-- Server commands and maintenance: [Server Usage](#server-usage)
-- Go CLI, routers, OpenWrt, and desktop clients: [Client Usage](#client-usage)
+- Server quick start: [Quick Start](docs/quick-start.md)
+- Server commands and maintenance: [Server Usage](docs/server-usage.md)
+- Go CLI, routers, OpenWrt, and desktop clients: [CLI Client](docs/cli-client.md)
 - OpenWrt always-on keepalive with public-IP refresh: [OpenWrt keepalive guide](docs/openwrt-keepalive.zh-CN.md)
-- Flutter desktop and mobile client: [Flutter Client](#flutter-client)
+- Flutter desktop and mobile client: [Flutter Client](docs/flutter-client.md)
 
 ## Port Syntax
 
@@ -116,37 +116,6 @@ Check a protected port:
 ```bash
 ./knockgate-client check SERVER_IP 5432
 ./knockgate-client check SERVER_IP 5432/tcp 5432/udp
-```
-
-## Downloads
-
-Release assets:
-
-```text
-Server:
-https://github.com/leconio/knockport/releases/latest/download/knockgate_server_linux_amd64.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate_server_linux_arm64.tar.gz
-
-Go CLI client:
-https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_amd64.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_386.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_arm64.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_armv7.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_armv6.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_mips_softfloat.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_mipsle_softfloat.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_mips64.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_mips64le.tar.gz
-```
-
-Installed server files:
-
-```text
-/usr/local/bin/knockgate
-/etc/knockgate/knockgate.conf
-/etc/knockgate/knockgate.nft
-/etc/knockgate/knockgate.apply.nft
-/etc/systemd/system/knockgate.service
 ```
 
 The Go CLI client is published as release assets. It is separate from the server installer and is not installed on the server by `install.sh`.

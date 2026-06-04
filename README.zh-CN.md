@@ -24,11 +24,11 @@ KnockGate 使用 `libpcap` 抓包，不监听敲门端口；使用 HMAC 校验�
 
 ## 使用方法
 
-- 服务端快速开始：[快速开始](#快速开始)
-- 服务端命令和维护：[服务端用法](#服务端用法)
-- Go CLI、路由器、OpenWrt 和桌面客户端：[客户端用法](#客户端用法)
+- 服务端快速开始：[快速开始](docs/quick-start.zh-CN.md)
+- 服务端命令和维护：[服务端用法](docs/server-usage.zh-CN.md)
+- Go CLI、路由器、OpenWrt 和桌面客户端：[CLI 客户端](docs/cli-client.zh-CN.md)
 - OpenWrt 常驻保活和公网 IP 自动刷新：[OpenWrt 保持互通指南](docs/openwrt-keepalive.zh-CN.md)
-- Flutter 桌面端和移动端客户端：[Flutter 客户端](#flutter-客户端)
+- Flutter 桌面端和移动端客户端：[Flutter 客户端](docs/flutter-client.zh-CN.md)
 
 ## 保护端口写法
 
@@ -115,39 +115,6 @@ cd knockgate_client_cli_linux_amd64
 ./knockgate-client check SERVER_IP 5432
 ./knockgate-client check SERVER_IP 5432/tcp 5432/udp
 ```
-
-## 下载
-
-Release 产物：
-
-```text
-服务端：
-https://github.com/leconio/knockport/releases/latest/download/knockgate_server_linux_amd64.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate_server_linux_arm64.tar.gz
-
-Go CLI 客户端：
-https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_amd64.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_386.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_arm64.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_armv7.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_armv6.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_mips_softfloat.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_mipsle_softfloat.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_mips64.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_mips64le.tar.gz
-```
-
-服务端安装路径：
-
-```text
-/usr/local/bin/knockgate
-/etc/knockgate/knockgate.conf
-/etc/knockgate/knockgate.nft
-/etc/knockgate/knockgate.apply.nft
-/etc/systemd/system/knockgate.service
-```
-
-Go CLI 客户端会作为 Release 独立资产发布。它和服务端安装脚本分开，`install.sh` 不会把客户端安装到服务器。
 
 ## 服务端用法
 
