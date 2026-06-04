@@ -116,8 +116,8 @@ Release assets:
 
 ```text
 Server:
-https://github.com/leconio/knockport/releases/latest/download/knockgate_linux_amd64.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate_linux_arm64.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_server_linux_amd64.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_server_linux_arm64.tar.gz
 
 Go CLI client:
 https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_amd64.tar.gz
@@ -264,6 +264,8 @@ sudo knockgate qr
 
 For routers, small Linux hosts, OpenWrt, Asuswrt-Merlin, and modified router firmware, use the Go CLI client. It is a static binary and does not require Go, OpenSSL, curl, nc, bash, or Python on the target device.
 
+For a full OpenWrt keepalive setup, including procd service installation, public-IP refresh behavior, time sync, logs, and troubleshooting, see [OpenWrt keepalive guide](docs/openwrt-keepalive.zh-CN.md).
+
 Download the matching asset from the latest release:
 
 ```text
@@ -347,7 +349,7 @@ UDP checks send a probe only. UDP has no handshake, so a generic client cannot r
 
 ## Flutter Client
 
-The Flutter client is in [`flutter/`](flutter/). It supports profile import URLs, QR scanning on Android/iOS/macOS, manual profile editing, UDP-HMAC knocking, and connectivity checks.
+The Flutter client is in [`flutter/`](flutter/). It supports profile import URLs, QR scanning on Android/iOS/macOS, manual profile editing, UDP-HMAC knocking, connectivity checks, and optional app-open auto refresh based on public IP and `open_timeout`.
 
 ```bash
 cd flutter

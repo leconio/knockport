@@ -114,8 +114,8 @@ Release 产物：
 
 ```text
 服务端：
-https://github.com/leconio/knockport/releases/latest/download/knockgate_linux_amd64.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate_linux_arm64.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_server_linux_amd64.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_server_linux_arm64.tar.gz
 
 Go CLI 客户端：
 https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_amd64.tar.gz
@@ -262,6 +262,8 @@ sudo knockgate qr
 
 路由器、小内存 Linux 主机、OpenWrt、华硕梅林和官改固件，优先使用 Go CLI 客户端。它是静态二进制，目标设备不需要安装 Go、OpenSSL、curl、nc、bash 或 Python。
 
+OpenWrt 常驻保活、procd 服务安装、公网 IP 刷新逻辑、时间同步、日志和故障排查，请看 [OpenWrt 保持互通指南](docs/openwrt-keepalive.zh-CN.md)。
+
 从最新 Release 下载匹配架构的产物：
 
 ```text
@@ -345,7 +347,7 @@ UDP 没有通用可靠握手。客户端对 UDP 只能发送探测包，不能�
 
 ## Flutter 客户端
 
-Flutter 客户端位于 [`flutter/`](flutter/)，支持导入 URL、Android/iOS/macOS 扫码、手动编辑配置、UDP-HMAC 敲门和连通性检查。
+Flutter 客户端位于 [`flutter/`](flutter/)，支持导入 URL、Android/iOS/macOS 扫码、手动编辑配置、UDP-HMAC 敲门、连通性检查，以及可选的 App 打开时自动刷新。自动刷新会根据当前公网 IP 和 `open_timeout` 判断是否需要重新敲门。
 
 ![KnockGate 展示图](docs/images/knockgate-hero.jpg)
 

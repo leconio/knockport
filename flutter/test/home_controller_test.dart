@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:knockgate_client/features/home/home_controller.dart';
+import 'package:knockgate_client/services/auto_refresh_service.dart';
 import 'package:knockgate_client/services/connectivity_service.dart';
 import 'package:knockgate_client/services/knock_service.dart';
 import 'package:knockgate_client/services/network_warning_service.dart';
@@ -27,6 +28,7 @@ void main() {
       store: ProfileStore(),
       knockService: KnockService(),
       connectivityService: ConnectivityService(),
+      autoRefreshService: AutoRefreshService(ipCheckUrls: const <String>[]),
       networkWarningService: warningService ?? _NoopNetworkWarningService(),
     );
   }
@@ -83,6 +85,21 @@ void main() {
     await controller.refreshHostWarning();
 
     expect(controller.hostWarning, contains('Private/fake-IP'));
+  });
+
+  test('auto refresh setting is persisted', () async {
+    SharedPreferences.setMockInitialValues({});
+    final controller = buildController();
+    addTearDown(controller.dispose);
+
+    await controller.init();
+    await controller.setAutoRefreshEnabled(true);
+
+    final restored = buildController();
+    addTearDown(restored.dispose);
+    await restored.init();
+
+    expect(restored.autoRefreshEnabled, isTrue);
   });
 }
 

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../models/knock_profile.dart';
+import '../../services/auto_refresh_service.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/knock_service.dart';
 import '../../services/network_warning_service.dart';
@@ -15,6 +16,7 @@ class HomeController extends ChangeNotifier {
     required this.store,
     required this.knockService,
     required this.connectivityService,
+    required this.autoRefreshService,
     NetworkWarningService? networkWarningService,
   }) : networkWarningService =
            networkWarningService ?? NetworkWarningService() {
@@ -27,6 +29,7 @@ class HomeController extends ChangeNotifier {
   final ProfileStore store;
   final KnockService knockService;
   final ConnectivityService connectivityService;
+  final AutoRefreshService autoRefreshService;
   final NetworkWarningService networkWarningService;
 
   final labelController = TextEditingController();
@@ -44,6 +47,9 @@ class HomeController extends ChangeNotifier {
   bool checkDirty = false;
   String? lastError;
   String? hostWarning;
+  bool autoRefreshEnabled = false;
+  String? lastAutoRefreshIP;
+  DateTime? lastAutoRefreshKnock;
   int errorVersion = 0;
   List<String> checkResults = const <String>[];
   List<String> knockLogs = const <String>[];
@@ -79,7 +85,14 @@ class HomeController extends ChangeNotifier {
 
   Future<void> init() async {
     setProfile(await store.loadProfile(), notify: false);
+    autoRefreshEnabled = await store.loadAutoRefreshEnabled();
+    final autoState = await store.loadAutoRefreshState();
+    lastAutoRefreshIP = autoState.lastPublicIP;
+    lastAutoRefreshKnock = autoState.lastKnock;
     notifyListeners();
+    if (autoRefreshEnabled) {
+      unawaited(runAutoRefreshCheck(trigger: 'App opened'));
+    }
   }
 
   void setProfile(KnockProfile nextProfile, {bool notify = true}) {
@@ -198,6 +211,70 @@ class HomeController extends ChangeNotifier {
     }, rethrowErrors: onLog != null);
   }
 
+  Future<void> setAutoRefreshEnabled(bool enabled) async {
+    if (autoRefreshEnabled == enabled) {
+      return;
+    }
+    autoRefreshEnabled = enabled;
+    await store.saveAutoRefreshEnabled(enabled);
+    addKnockLog('Auto refresh ${enabled ? 'enabled' : 'disabled'}');
+    notifyListeners();
+    if (enabled) {
+      await runAutoRefreshCheck(trigger: 'Auto refresh enabled');
+    }
+  }
+
+  Future<void> runAutoRefreshCheck({String trigger = 'Manual check'}) async {
+    if (!autoRefreshEnabled) {
+      addKnockLog('Auto refresh skipped: disabled');
+      return;
+    }
+    if (busy) {
+      addKnockLog('Auto refresh skipped: another operation is running');
+      return;
+    }
+    await _runBusy(() async {
+      final nextProfile = profile;
+      addKnockLog('Auto refresh check: $trigger');
+      try {
+        if (nextProfile.host.trim().isEmpty ||
+            nextProfile.knockPorts.isEmpty ||
+            nextProfile.secret.trim().isEmpty) {
+          addKnockLog('Auto refresh skipped: profile is incomplete');
+          return;
+        }
+        final warnings = await networkWarningService.warningsForHost(
+          nextProfile.host,
+        );
+        for (final warning in warnings) {
+          addKnockLog(warning);
+        }
+        final publicIP = await autoRefreshService.detectPublicIPv4();
+        addKnockLog('Current public IPv4: $publicIP');
+        final decision = autoRefreshService.shouldRefresh(
+          currentIP: publicIP,
+          lastIP: lastAutoRefreshIP,
+          lastKnock: lastAutoRefreshKnock,
+          openTimeout: nextProfile.openTimeout,
+        );
+        if (!decision.shouldKnock) {
+          addKnockLog('Auto refresh skipped: ${decision.reason}');
+          return;
+        }
+        addKnockLog('Auto refresh knock: ${decision.reason}');
+        await knockService.knock(nextProfile, onLog: addKnockLog);
+        final now = DateTime.now();
+        await store.saveAutoRefreshState(publicIP: publicIP, lastKnock: now);
+        lastAutoRefreshIP = publicIP;
+        lastAutoRefreshKnock = now;
+        addKnockLog('Auto refresh state saved');
+      } catch (error) {
+        addKnockLog('Auto refresh failed: $error');
+        rethrow;
+      }
+    });
+  }
+
   void addKnockLog(String message) {
     final now = DateTime.now();
     final stamp =
@@ -238,6 +315,9 @@ class HomeController extends ChangeNotifier {
     checkResults = const <String>[];
     knockLogs = const <String>[];
     await store.saveProfile(defaults);
+    await store.clearAutoRefreshState();
+    lastAutoRefreshIP = null;
+    lastAutoRefreshKnock = null;
     notifyListeners();
   }
 

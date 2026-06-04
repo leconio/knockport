@@ -4,6 +4,8 @@ Flutter GUI client for KnockGate UDP port knocking.
 
 The app imports a `knockgate://` profile, sends the UDP knock sequence in order, places the HMAC payload only on the final step, and checks protected ports after the firewall allowlist opens.
 
+The optional auto refresh setting checks the current public IP when the app opens. It sends a new knock only when the public IP changed or when the last successful knock is close to `open_timeout`. It is not a background keepalive service.
+
 ## Supported platforms
 
 - Android
@@ -40,6 +42,7 @@ Fields:
 2. Press `Save`.
 3. Press `Knock` to send UDP packets in the configured order.
 4. Press `Check` to test protected TCP ports. UDP-only protected ports can be saved and imported, but UDP cannot be confirmed with a reliable handshake.
+5. In `Settings`, enable `Auto refresh allowlist` if you want the app to refresh the firewall allowlist when it opens.
 
 Check results:
 

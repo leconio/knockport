@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../features/home/home_controller.dart';
 import '../features/home/home_page.dart';
+import '../services/auto_refresh_service.dart';
 import '../services/connectivity_service.dart';
 import '../services/knock_service.dart';
 import '../services/profile_store.dart';
@@ -19,6 +20,7 @@ class KnockGateApp extends StatelessWidget {
         store: ProfileStore(),
         knockService: KnockService(),
         connectivityService: ConnectivityService(),
+        autoRefreshService: AutoRefreshService(),
       )..init(),
       child: MaterialApp(
         title: 'KnockGate',

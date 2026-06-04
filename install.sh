@@ -78,14 +78,17 @@ install_runtime_deps() {
 
 release_asset() {
   local arch="$1"
+  printf 'knockgate_server_linux_%s.tar.gz\n' "${arch}"
+}
+
+legacy_release_asset() {
+  local arch="$1"
   printf 'knockgate_linux_%s.tar.gz\n' "${arch}"
 }
 
-release_url() {
+release_url_for_asset() {
   local repo="${KNOCKGATE_REPO:-$DEFAULT_REPO}"
-  local arch="$1"
-  local asset
-  asset="$(release_asset "$arch")"
+  local asset="$1"
 
   if [[ -n "${KNOCKGATE_ASSET_BASE:-}" ]]; then
     printf '%s/%s\n' "${KNOCKGATE_ASSET_BASE%/}" "${asset}"
@@ -97,6 +100,11 @@ release_url() {
   else
     printf 'https://github.com/%s/releases/latest/download/%s\n' "${repo}" "${asset}"
   fi
+}
+
+release_url() {
+  local arch="$1"
+  release_url_for_asset "$(release_asset "$arch")"
 }
 
 verify_asset() {
@@ -148,11 +156,25 @@ main() {
 
   install_runtime_deps
 
-  download_file "$url" "${tmpdir}/${asset}"
+  if ! download_file "$url" "${tmpdir}/${asset}"; then
+    local legacy_asset legacy_url
+    legacy_asset="$(legacy_release_asset "$arch")"
+    legacy_url="$(release_url_for_asset "$legacy_asset")"
+    yellow "Server-marked asset was not found; falling back to legacy asset: ${legacy_url}"
+    asset="$legacy_asset"
+    url="$legacy_url"
+    download_file "$url" "${tmpdir}/${asset}"
+  fi
   download_file "${url}.sha256" "${tmpdir}/${asset}.sha256"
   (cd "$tmpdir" && verify_asset "${asset}" "${asset}.sha256")
   tar -xzf "${tmpdir}/${asset}" -C "$tmpdir"
-  install -m 0755 "${tmpdir}/knockgate_linux_${arch}/knockgate" "${INSTALL_DIR}/knockgate"
+  if [[ -x "${tmpdir}/knockgate_server_linux_${arch}/knockgate" ]]; then
+    install -m 0755 "${tmpdir}/knockgate_server_linux_${arch}/knockgate" "${INSTALL_DIR}/knockgate"
+  elif [[ -x "${tmpdir}/knockgate_linux_${arch}/knockgate" ]]; then
+    install -m 0755 "${tmpdir}/knockgate_linux_${arch}/knockgate" "${INSTALL_DIR}/knockgate"
+  else
+    die "release asset does not contain knockgate binary for ${arch}"
+  fi
 
   green "Installed:"
   printf '  %s\n' "${INSTALL_DIR}/knockgate"

@@ -44,8 +44,8 @@ jobs:
         with:
           name: knockgate-server-linux-${{ matrix.goarch }}
           path: |
-            dist/knockgate_linux_${{ matrix.goarch }}.tar.gz
-            dist/knockgate_linux_${{ matrix.goarch }}.tar.gz.sha256
+            dist/knockgate_server_linux_${{ matrix.goarch }}.tar.gz
+            dist/knockgate_server_linux_${{ matrix.goarch }}.tar.gz.sha256
 
   build-go-client:
     name: Build Go client ${{ matrix.name }}

@@ -5,7 +5,7 @@ VERSION="${1:-dev}"
 GOOS_TARGET="${GOOS:-linux}"
 GOARCH_TARGET="${GOARCH:-$(go env GOARCH)}"
 OUT_DIR="${OUT_DIR:-dist}"
-PKG="knockgate_${GOOS_TARGET}_${GOARCH_TARGET}"
+PKG="knockgate_server_${GOOS_TARGET}_${GOARCH_TARGET}"
 
 mkdir -p "${OUT_DIR}/${PKG}"
 

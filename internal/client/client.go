@@ -753,9 +753,24 @@ func PlatformPaths(platform string) (Paths, error) {
 }
 
 func ExistingPaths() (Paths, error) {
-	for _, platform := range []string{"systemd", "openwrt", "asus-merlin"} {
+	for _, configPath := range []string{"/etc/knockgate-client/client.conf", "/opt/etc/knockgate-client/client.conf"} {
+		if !fileExists(configPath) {
+			continue
+		}
+		values, err := readConfig(configPath)
+		if err == nil {
+			if platform := values["PLATFORM"]; platform != "" {
+				return PlatformPaths(platform)
+			}
+		}
+		platform, err := DetectPlatform("auto")
+		if err == nil {
+			return PlatformPaths(platform)
+		}
+	}
+	for _, platform := range []string{"openwrt", "asus-merlin", "systemd"} {
 		paths, _ := PlatformPaths(platform)
-		if fileExists(paths.Service) || fileExists(paths.Config) {
+		if fileExists(paths.Service) {
 			return paths, nil
 		}
 	}
