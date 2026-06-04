@@ -22,6 +22,14 @@ It uses UDP port sequences captured with `libpcap`, validates the final packet w
 - Terminal QR code for client profile import
 - Linux `amd64` and `arm64` release packages
 
+## Usage
+
+- Server quick start: [Quick Start](#quick-start)
+- Server commands and maintenance: [Server Usage](#server-usage)
+- Go CLI, routers, OpenWrt, and desktop clients: [Client Usage](#client-usage)
+- OpenWrt always-on keepalive with public-IP refresh: [OpenWrt keepalive guide](docs/openwrt-keepalive.zh-CN.md)
+- Flutter desktop and mobile client: [Flutter Client](#flutter-client)
+
 ## Port Syntax
 
 Protected ports support protocol suffixes:

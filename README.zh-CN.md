@@ -22,6 +22,14 @@ KnockGate 使用 `libpcap` 抓包，不监听敲门端口；使用 HMAC 校验�
 - 终端二维码导入客户端配置
 - 提供 Linux `amd64` / `arm64` 预编译产物
 
+## 使用方法
+
+- 服务端快速开始：[快速开始](#快速开始)
+- 服务端命令和维护：[服务端用法](#服务端用法)
+- Go CLI、路由器、OpenWrt 和桌面客户端：[客户端用法](#客户端用法)
+- OpenWrt 常驻保活和公网 IP 自动刷新：[OpenWrt 保持互通指南](docs/openwrt-keepalive.zh-CN.md)
+- Flutter 桌面端和移动端客户端：[Flutter 客户端](#flutter-客户端)
+
 ## 保护端口写法
 
 ```text
@@ -54,7 +62,7 @@ KnockGate 使用 `libpcap` 抓包，不监听敲门端口；使用 HMAC 校验�
 - RHEL 系：Rocky Linux、AlmaLinux、CentOS Stream、Fedora
 - Arch Linux
 
-## Quick Start
+## 快速开始
 
 服务器安装：
 
