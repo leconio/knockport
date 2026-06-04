@@ -47,6 +47,39 @@ func Build(secret []byte, port int, step int, now time.Time) (string, error) {
 	return fmt.Sprintf("%s|%d|%d|%s|%s", Version, step, ts, nonce, mac), nil
 }
 
+// BuildCompact 构造客户端最后一步发送的 19 字节二进制 HMAC payload。
+//
+// 格式必须和 VerifyBytes 保持一致：
+//
+//	K1 + step + unix_timestamp + nonce + truncated_hmac
+func BuildCompact(secret []byte, port int, step int, now time.Time) ([]byte, error) {
+	if port < 1 || port > 65535 {
+		return nil, fmt.Errorf("invalid port: %d", port)
+	}
+	if step < 0 || step > 255 {
+		return nil, fmt.Errorf("invalid step: %d", step)
+	}
+	var nonce [4]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return nil, err
+	}
+	ts := uint32(now.Unix())
+	msg := compactMessage(port, step, ts, nonce[:])
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write(msg)
+	sum := mac.Sum(nil)
+
+	out := make([]byte, 0, 19)
+	out = append(out, 'K', '1')
+	out = append(out, byte(step))
+	var tsBuf [4]byte
+	binary.BigEndian.PutUint32(tsBuf[:], ts)
+	out = append(out, tsBuf[:]...)
+	out = append(out, nonce[:]...)
+	out = append(out, sum[:8]...)
+	return out, nil
+}
+
 func Verify(secret []byte, port int, raw string, windowSeconds int, now time.Time) (Payload, bool) {
 	if payload, ok := VerifyBytes(secret, port, []byte(raw), windowSeconds, now); ok {
 		return payload, true

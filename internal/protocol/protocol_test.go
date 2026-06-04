@@ -59,3 +59,22 @@ func TestExternalCompactPayload(t *testing.T) {
 		t.Fatalf("payload did not verify")
 	}
 }
+
+func TestBuildCompactVerifies(t *testing.T) {
+	secret := []byte("12345678901234567890123456789012")
+	now := time.Unix(1000, 0)
+	raw, err := BuildCompact(secret, 37708, 5, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) != 19 {
+		t.Fatalf("payload length = %d", len(raw))
+	}
+	payload, ok := VerifyBytes(secret, 37708, raw, 60, now)
+	if !ok {
+		t.Fatal("expected compact payload to verify")
+	}
+	if payload.Step != 5 {
+		t.Fatalf("step = %d", payload.Step)
+	}
+}

@@ -87,24 +87,25 @@ curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh \
 sudo knockgate qr
 ```
 
-客户端下载 Shell 脚本：
+客户端下载 Go CLI。请按客户端机器架构选择对应产物：
 
 ```bash
-curl -fLO https://github.com/leconio/knockport/releases/latest/download/knockgate-knock.sh
-chmod +x knockgate-knock.sh
+curl -fLO https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_amd64.tar.gz
+tar -xzf knockgate_client_cli_linux_amd64.tar.gz
+cd knockgate_client_cli_linux_amd64
 ```
 
 客户端敲门：
 
 ```bash
-./knockgate-knock.sh --url 'knockgate://import/v1?...'
+./knockgate-client --url 'knockgate://import/v1?...'
 ```
 
 检查保护端口：
 
 ```bash
-./knockgate-knock.sh check SERVER_IP 5432
-./knockgate-knock.sh check SERVER_IP 5432/tcp 5432/udp
+./knockgate-client check SERVER_IP 5432
+./knockgate-client check SERVER_IP 5432/tcp 5432/udp
 ```
 
 ## 下载
@@ -112,9 +113,20 @@ chmod +x knockgate-knock.sh
 Release 产物：
 
 ```text
+服务端：
 https://github.com/leconio/knockport/releases/latest/download/knockgate_linux_amd64.tar.gz
 https://github.com/leconio/knockport/releases/latest/download/knockgate_linux_arm64.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate-knock.sh
+
+Go CLI 客户端：
+https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_amd64.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_386.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_arm64.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_armv7.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_armv6.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_mips_softfloat.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_mipsle_softfloat.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_mips64.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_mips64le.tar.gz
 ```
 
 服务端安装路径：
@@ -127,7 +139,7 @@ https://github.com/leconio/knockport/releases/latest/download/knockgate-knock.sh
 /etc/systemd/system/knockgate.service
 ```
 
-Shell 客户端脚本会作为 Release 独立资产发布，仓库路径为 `clients/shell/`。`install.sh` 不会把它们安装到服务器。
+Go CLI 客户端会作为 Release 独立资产发布。它和服务端安装脚本分开，`install.sh` 不会把客户端安装到服务器。
 
 ## 服务端用法
 
@@ -236,7 +248,7 @@ KnockGate 的 allow 规则不是对所有主机防火墙规则的旁路。早期
 
 导入 URL 里的 `host` 默认来自服务端本机自动检测。云服务器上这个值可能是 `10.x`、`172.16-31.x`、`192.168.x` 这类内网地址。KnockGate 会在这种情况下打印提示。如果客户端不在同一个内网，请在导入前把 URL 里的 `host=` 手动替换成公网 IP 或域名。
 
-Shell 客户端和 Flutter 客户端检测到内网、CGNAT、保留地址、fake-IP 地址段，例如 `198.18.0.0/15`，或检测到 TUN/VPN 类网卡时，会给出提示。这不会阻止敲门，只表示 TCP 检测结果可能受代理、VPN 或 fake-IP DNS 影响。敲门包和检测连接最好走同一条真实公网路径。
+Go CLI 和 Flutter 客户端检测到内网、CGNAT、保留地址、fake-IP 地址段，例如 `198.18.0.0/15`，或检测到 TUN/VPN 类网卡时，会给出提示。一次性敲门不会因此中止；自动刷新服务模式下，Go CLI 会跳过本轮，因为当前公网地址或路由路径不可信。
 
 ## 客户端用法
 
@@ -246,20 +258,74 @@ Shell 客户端和 Flutter 客户端检测到内网、CGNAT、保留地址、fak
 sudo knockgate qr
 ```
 
-使用仓库中的 Shell 客户端：
+### Go CLI 客户端
 
-```bash
-clients/shell/knockgate-knock.sh --url 'knockgate://import/v1?...'
-clients/shell/knockgate-knock.sh --secret BASE64URL_SECRET --check-ports 5432 SERVER_IP 45669 65075 31244 20035 64168 59462
+路由器、小内存 Linux 主机、OpenWrt、华硕梅林和官改固件，优先使用 Go CLI 客户端。它是静态二进制，目标设备不需要安装 Go、OpenSSL、curl、nc、bash 或 Python。
+
+从最新 Release 下载匹配架构的产物：
+
+```text
+knockgate_client_cli_linux_amd64.tar.gz
+knockgate_client_cli_linux_386.tar.gz
+knockgate_client_cli_linux_arm64.tar.gz
+knockgate_client_cli_linux_armv7.tar.gz
+knockgate_client_cli_linux_armv6.tar.gz
+knockgate_client_cli_linux_mips_softfloat.tar.gz
+knockgate_client_cli_linux_mipsle_softfloat.tar.gz
+knockgate_client_cli_linux_mips64.tar.gz
+knockgate_client_cli_linux_mips64le.tar.gz
 ```
 
-导入 URL 包含 `protected_ports`，所以 URL 模式敲门完成后会自动检测保护端口。手动 secret 模式提供 `--check-ports` 后也会在敲门完成后检测。
+常见选择：
+
+```text
+OpenWrt aarch64/Filogic/现代 ARM64      linux_arm64
+OpenWrt ARMv7                           linux_armv7
+较老 ARM 路由器                          linux_armv6
+很多较老华硕/MIPS 路由器                 linux_mipsle_softfloat
+x86 软路由                               linux_amd64 或 linux_386
+```
+
+一次性敲门：
+
+```bash
+./knockgate-client --url 'knockgate://import/v1?...'
+./knockgate-client --secret BASE64URL_SECRET --check-ports 5432 SERVER_IP 45669 65075 31244 20035 64168 59462
+```
 
 只检测，不敲门：
 
 ```bash
-clients/shell/knockgate-knock.sh check SERVER_IP 5432
-clients/shell/knockgate-knock.sh check SERVER_IP 5432/tcp 5432/udp
+./knockgate-client check SERVER_IP 5432
+./knockgate-client check SERVER_IP 5432/tcp 5432/udp
+```
+
+把 Go CLI 安装成自动刷新服务：
+
+```bash
+sudo ./knockgate-client install \
+  --url 'knockgate://import/v1?...' \
+  --interval 300 \
+  --ip-check-url http://api.ipify.org \
+  --ip-check-url http://checkip.amazonaws.com
+```
+
+安装器会自动识别宿主机服务管理方式，只写入匹配的平台服务：
+
+```text
+systemd              /etc/systemd/system/knockgate-client.service
+OpenWrt procd        /etc/init.d/knockgate-client
+Asuswrt-Merlin       /opt/etc/init.d/S99knockgate-client，需要 Entware 风格 /opt 目录
+```
+
+服务每轮敲门前会检测当前公网 IPv4。如果地址是内网、CGNAT、保留地址、fake-IP，或者到 KnockGate 服务端的路由走 TUN/VPN 类网卡，服务会记录 warning 并跳过本轮。只要检测到真实公网 IPv4，就会按间隔敲门；即使 IP 和上一次相同，也会重新敲门，用来刷新服务端白名单 timeout。
+
+服务命令：
+
+```bash
+knockgate-client status
+knockgate-client logs
+sudo knockgate-client uninstall
 ```
 
 TCP 检查结果：

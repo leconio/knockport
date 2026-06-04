@@ -89,24 +89,25 @@ Print the client import URL / QR code:
 sudo knockgate qr
 ```
 
-Download the shell client on a client machine:
+Download the Go CLI client on a client machine. Choose the asset that matches the client machine architecture:
 
 ```bash
-curl -fLO https://github.com/leconio/knockport/releases/latest/download/knockgate-knock.sh
-chmod +x knockgate-knock.sh
+curl -fLO https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_amd64.tar.gz
+tar -xzf knockgate_client_cli_linux_amd64.tar.gz
+cd knockgate_client_cli_linux_amd64
 ```
 
 Open protected ports from the client:
 
 ```bash
-./knockgate-knock.sh --url 'knockgate://import/v1?...'
+./knockgate-client --url 'knockgate://import/v1?...'
 ```
 
 Check a protected port:
 
 ```bash
-./knockgate-knock.sh check SERVER_IP 5432
-./knockgate-knock.sh check SERVER_IP 5432/tcp 5432/udp
+./knockgate-client check SERVER_IP 5432
+./knockgate-client check SERVER_IP 5432/tcp 5432/udp
 ```
 
 ## Downloads
@@ -114,9 +115,20 @@ Check a protected port:
 Release assets:
 
 ```text
+Server:
 https://github.com/leconio/knockport/releases/latest/download/knockgate_linux_amd64.tar.gz
 https://github.com/leconio/knockport/releases/latest/download/knockgate_linux_arm64.tar.gz
-https://github.com/leconio/knockport/releases/latest/download/knockgate-knock.sh
+
+Go CLI client:
+https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_amd64.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_386.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_arm64.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_armv7.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_armv6.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_mips_softfloat.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_mipsle_softfloat.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_mips64.tar.gz
+https://github.com/leconio/knockport/releases/latest/download/knockgate_client_cli_linux_mips64le.tar.gz
 ```
 
 Installed server files:
@@ -129,7 +141,7 @@ Installed server files:
 /etc/systemd/system/knockgate.service
 ```
 
-The shell client scripts are published as release assets and kept in this repository under `clients/shell/`. They are not installed on the server by `install.sh`.
+The Go CLI client is published as release assets. It is separate from the server installer and is not installed on the server by `install.sh`.
 
 ## Server Usage
 
@@ -238,7 +250,7 @@ The server only needs outbound network access during package installation and bi
 
 The generated import URL uses the server address detected locally. On cloud hosts this can be a private address such as `10.x`, `172.16-31.x`, or `192.168.x`. KnockGate will print a warning in that case. If clients are outside that private network, replace the `host=` value in the import URL with the public IP or domain before importing it.
 
-The shell and Flutter clients warn when the host resolves to a private, CGNAT, reserved, or fake-IP range such as `198.18.0.0/15`, or when a TUN/VPN-like interface is detected. This does not stop knocking. It means the TCP check result may be misleading if knock packets and TCP checks leave through a proxy, VPN, or fake-IP DNS path instead of the same public route.
+The Go CLI and Flutter clients warn when the host resolves to a private, CGNAT, reserved, or fake-IP range such as `198.18.0.0/15`, or when a TUN/VPN-like interface is detected. This does not stop one-shot knocking. In auto-refresh service mode, the Go CLI skips that round because the public address/path cannot be trusted.
 
 ## Client Usage
 
@@ -248,20 +260,74 @@ Create an import URL on the server:
 sudo knockgate qr
 ```
 
-Use the shell client from this repository:
+### Go CLI Client
 
-```bash
-clients/shell/knockgate-knock.sh --url 'knockgate://import/v1?...'
-clients/shell/knockgate-knock.sh --secret BASE64URL_SECRET --check-ports 5432 SERVER_IP 45669 65075 31244 20035 64168 59462
+For routers, small Linux hosts, OpenWrt, Asuswrt-Merlin, and modified router firmware, use the Go CLI client. It is a static binary and does not require Go, OpenSSL, curl, nc, bash, or Python on the target device.
+
+Download the matching asset from the latest release:
+
+```text
+knockgate_client_cli_linux_amd64.tar.gz
+knockgate_client_cli_linux_386.tar.gz
+knockgate_client_cli_linux_arm64.tar.gz
+knockgate_client_cli_linux_armv7.tar.gz
+knockgate_client_cli_linux_armv6.tar.gz
+knockgate_client_cli_linux_mips_softfloat.tar.gz
+knockgate_client_cli_linux_mipsle_softfloat.tar.gz
+knockgate_client_cli_linux_mips64.tar.gz
+knockgate_client_cli_linux_mips64le.tar.gz
 ```
 
-The import URL contains `protected_ports`, so URL mode checks protected ports automatically after knocking. Manual mode checks after knocking when `--check-ports` is provided.
+Typical choices:
+
+```text
+OpenWrt aarch64/Filogic/modern ARM64     linux_arm64
+OpenWrt ARMv7                            linux_armv7
+older ARM routers                        linux_armv6
+many older Asus/MIPS routers             linux_mipsle_softfloat
+x86 router boxes                         linux_amd64 or linux_386
+```
+
+One-shot knock:
+
+```bash
+./knockgate-client --url 'knockgate://import/v1?...'
+./knockgate-client --secret BASE64URL_SECRET --check-ports 5432 SERVER_IP 45669 65075 31244 20035 64168 59462
+```
 
 Check without knocking:
 
 ```bash
-clients/shell/knockgate-knock.sh check SERVER_IP 5432
-clients/shell/knockgate-knock.sh check SERVER_IP 5432/tcp 5432/udp
+./knockgate-client check SERVER_IP 5432
+./knockgate-client check SERVER_IP 5432/tcp 5432/udp
+```
+
+Install the Go CLI as an auto-refresh service on a client host:
+
+```bash
+sudo ./knockgate-client install \
+  --url 'knockgate://import/v1?...' \
+  --interval 300 \
+  --ip-check-url http://api.ipify.org \
+  --ip-check-url http://checkip.amazonaws.com
+```
+
+The installer auto-detects the host service manager and writes only the matching service:
+
+```text
+systemd              /etc/systemd/system/knockgate-client.service
+OpenWrt procd        /etc/init.d/knockgate-client
+Asuswrt-Merlin       /opt/etc/init.d/S99knockgate-client, requires Entware-style /opt layout
+```
+
+The service checks the current public IPv4 before each knock. If the address is private, CGNAT, reserved, fake-IP, or if the route to the KnockGate server uses a TUN/VPN-like interface, the service logs a warning and skips that round. When a public IPv4 is available, it knocks every interval even if the IP is unchanged, which refreshes the server allowlist timeout.
+
+Service commands:
+
+```bash
+knockgate-client status
+knockgate-client logs
+sudo knockgate-client uninstall
 ```
 
 TCP results:

@@ -47,6 +47,67 @@ jobs:
             dist/knockgate_linux_${{ matrix.goarch }}.tar.gz
             dist/knockgate_linux_${{ matrix.goarch }}.tar.gz.sha256
 
+  build-go-client:
+    name: Build Go client ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-amd64
+            goos: linux
+            goarch: amd64
+          - name: linux-386
+            goos: linux
+            goarch: "386"
+          - name: linux-arm64
+            goos: linux
+            goarch: arm64
+          - name: linux-armv7
+            goos: linux
+            goarch: arm
+            goarm: "7"
+          - name: linux-armv6
+            goos: linux
+            goarch: arm
+            goarm: "6"
+          - name: linux-mips-softfloat
+            goos: linux
+            goarch: mips
+            gomips: softfloat
+          - name: linux-mipsle-softfloat
+            goos: linux
+            goarch: mipsle
+            gomips: softfloat
+          - name: linux-mips64
+            goos: linux
+            goarch: mips64
+          - name: linux-mips64le
+            goos: linux
+            goarch: mips64le
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test
+        run: go test ./...
+      - name: Build client release package
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          GOMIPS: ${{ matrix.gomips }}
+          OUT_DIR: dist
+        run: ./scripts/build-client-release.sh "${GITHUB_REF_NAME:-dev}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: knockgate-client-cli-${{ matrix.name }}
+          path: |
+            dist/knockgate_client_cli_*.tar.gz
+            dist/knockgate_client_cli_*.tar.gz.sha256
+
   flutter-android:
     name: Build Flutter Android
     runs-on: ubuntu-24.04
@@ -188,6 +249,7 @@ jobs:
     name: Publish GitHub release
     needs:
       - build-go
+      - build-go-client
       - flutter-android
       - flutter-windows
       - flutter-linux
@@ -200,10 +262,7 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Prepare shell client assets
-        run: chmod 0755 clients/shell/knockgate-knock.sh
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/*
-            clients/shell/knockgate-knock.sh
