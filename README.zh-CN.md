@@ -318,7 +318,11 @@ OpenWrt procd        /etc/init.d/knockgate-client
 Asuswrt-Merlin       /opt/etc/init.d/S99knockgate-client，需要 Entware 风格 /opt 目录
 ```
 
-服务每轮敲门前会检测当前公网 IPv4。如果地址是内网、CGNAT、保留地址、fake-IP，或者到 KnockGate 服务端的路由走 TUN/VPN 类网卡，服务会记录 warning 并跳过本轮。只要检测到真实公网 IPv4，就会按间隔敲门；即使 IP 和上一次相同，也会重新敲门，用来刷新服务端白名单 timeout。
+服务会按间隔检测当前公网 IPv4，但不会每轮都敲门。只有公网 IP 变化，或者本地记录的上次成功敲门时间接近导入 URL 里的 `open_timeout` 时，才会重新敲门。例如 `open_timeout=12h` 时，客户端会在上次成功敲门后大约 11h55m 刷新一次。如果 `open_timeout=0`，客户端会把白名单视为永久，只在公网 IP 变化时重新敲门。
+
+如果地址是内网、CGNAT、保留地址、fake-IP，或者到 KnockGate 服务端的路由走 TUN/VPN 类网卡，服务会记录 warning 并跳过本轮。
+
+最后一个 UDP 敲门包会用当前 Unix 时间戳参与 HMAC 签名。服务端会按导入 URL 里的 `hmac_window` 校验，通常是 60 秒，所以客户端和服务端时间需要保持同步。
 
 服务命令：
 
@@ -368,7 +372,7 @@ sudo knockgate clear   # 删除 table inet knockgate
 ## 安全说明
 
 - 导入 URL 和 HMAC secret 必须保密。
-- 客户端和服务端时间应保持基本同步。
+- 客户端和服务端时间需要同步。最后一个 HMAC 包包含当前 Unix 时间戳，超过配置的 `hmac_window`，通常是 60 秒，会被服务端拒绝。
 - 云厂商安全组需要允许 UDP 敲门包到达服务器。
 - 端口敲门不是 VPN，也不能替代服务自身的认证机制。
 

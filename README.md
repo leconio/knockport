@@ -320,7 +320,11 @@ OpenWrt procd        /etc/init.d/knockgate-client
 Asuswrt-Merlin       /opt/etc/init.d/S99knockgate-client, requires Entware-style /opt layout
 ```
 
-The service checks the current public IPv4 before each knock. If the address is private, CGNAT, reserved, fake-IP, or if the route to the KnockGate server uses a TUN/VPN-like interface, the service logs a warning and skips that round. When a public IPv4 is available, it knocks every interval even if the IP is unchanged, which refreshes the server allowlist timeout.
+The service checks the current public IPv4 every interval. It sends a new knock only when the public IP changes, or when the local last-knock timer is close to the import URL `open_timeout`. For example, with `open_timeout=12h`, the client refreshes around 11h55m after the last successful knock. If `open_timeout=0`, the client treats the allowlist as permanent and refreshes only when the public IP changes.
+
+If the address is private, CGNAT, reserved, fake-IP, or if the route to the KnockGate server uses a TUN/VPN-like interface, the service logs a warning and skips that round.
+
+The final UDP knock packet is HMAC-signed with the current Unix timestamp. The server verifies it against the import URL `hmac_window`, usually 60 seconds, so client and server clocks must be reasonably synchronized.
 
 Service commands:
 
@@ -368,7 +372,7 @@ sudo knockgate clear   # delete table inet knockgate
 ## Security Notes
 
 - Keep the import URL and HMAC secret private.
-- Keep client and server clocks reasonably synchronized.
+- Keep client and server clocks synchronized. The final HMAC packet includes the current Unix timestamp and is rejected outside the configured `hmac_window`, usually 60 seconds.
 - Allow UDP knock traffic in upstream cloud firewalls.
 - Port knocking is not a VPN and does not replace service-level authentication.
 

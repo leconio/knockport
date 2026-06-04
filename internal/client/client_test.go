@@ -40,3 +40,45 @@ func TestParseFlexibleDuration(t *testing.T) {
 		}
 	}
 }
+
+func TestShouldRefreshKnock(t *testing.T) {
+	now := time.Unix(2000, 0)
+
+	should, reason, _ := shouldRefreshKnock("8.8.8.8", "1.1.1.1", now, "12h", now)
+	if !should || reason == "" {
+		t.Fatal("expected IP change to refresh")
+	}
+
+	should, _, next := shouldRefreshKnock("8.8.8.8", "8.8.8.8", now.Add(-time.Hour), "12h", now)
+	if should {
+		t.Fatal("did not expect refresh before threshold")
+	}
+	if next <= 0 {
+		t.Fatal("expected next refresh duration")
+	}
+
+	should, reason, _ = shouldRefreshKnock("8.8.8.8", "8.8.8.8", now.Add(-12*time.Hour), "12h", now)
+	if !should || reason == "" {
+		t.Fatal("expected timeout refresh")
+	}
+
+	should, _, next = shouldRefreshKnock("8.8.8.8", "8.8.8.8", now.Add(-24*time.Hour), "0", now)
+	if should || next != 0 {
+		t.Fatal("permanent open_timeout should not refresh unchanged IP")
+	}
+}
+
+func TestParseOpenTimeout(t *testing.T) {
+	d, permanent, err := parseOpenTimeout("12h")
+	if err != nil || permanent || d != 12*time.Hour {
+		t.Fatalf("12h parsed as d=%s permanent=%v err=%v", d, permanent, err)
+	}
+	d, permanent, err = parseOpenTimeout("1d")
+	if err != nil || permanent || d != 24*time.Hour {
+		t.Fatalf("1d parsed as d=%s permanent=%v err=%v", d, permanent, err)
+	}
+	d, permanent, err = parseOpenTimeout("0")
+	if err != nil || !permanent || d != 0 {
+		t.Fatalf("0 parsed as d=%s permanent=%v err=%v", d, permanent, err)
+	}
+}

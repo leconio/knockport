@@ -69,13 +69,14 @@ type Options struct {
 }
 
 type Paths struct {
-	Platform string
-	Bin      string
-	Dir      string
-	Config   string
-	LastIP   string
-	Service  string
-	LogFile  string
+	Platform  string
+	Bin       string
+	Dir       string
+	Config    string
+	LastIP    string
+	LastKnock string
+	Service   string
+	LogFile   string
 }
 
 type multiFlag []string
@@ -152,6 +153,10 @@ Check results:
   FILTERED  端口未开: TCP timed out or network dropped the packet.
   UDP-SENT  未知状态: UDP packet was sent, not proven open.
   FAILED    未知状态: local/network command failed.
+
+Time note:
+  The final UDP packet is HMAC-signed with the current Unix timestamp.
+  Keep client and server clocks within the import URL hmac_window, usually 60s.
 `, version, name, name, name, name, name, name, name, name)
 }
 
@@ -327,7 +332,8 @@ func runInstall(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "Invalid interval: use at least 10 seconds.")
 		return 2
 	}
-	if _, err := ParseImport(opts.ImportURL); err != nil {
+	imp, err := ParseImport(opts.ImportURL)
+	if err != nil {
 		fmt.Fprintf(stderr, "Invalid import URL: %v\n", err)
 		return 2
 	}
@@ -353,6 +359,8 @@ func runInstall(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "Installed KnockGate client service (%s).\nConfig: %s\nCommand: %s\n", platform, paths.Config, paths.Bin)
+	fmt.Fprintf(stdout, "Refresh: public IP changes immediately; unchanged IP refreshes before open_timeout=%s.\n", emptyDash(imp.OpenTimeout))
+	fmt.Fprintf(stdout, "Time: keep client and server clocks within hmac_window=%ds.\n", imp.HMACWindow)
 	return 0
 }
 
@@ -570,20 +578,49 @@ func runServiceOnce(stdout, stderr io.Writer, opts Options, paths Paths) {
 		return
 	}
 	last := strings.TrimSpace(readSmall(paths.LastIP))
-	if last == publicIP {
-		logLine(stdout, "public IP unchanged (%s), refreshing knock", publicIP)
-	} else {
-		logLine(stdout, "public IP changed: %s -> %s", emptyDash(last), publicIP)
+	lastKnock, _ := readUnixTime(paths.LastKnock)
+	should, reason, nextAfter := shouldRefreshKnock(publicIP, last, lastKnock, imp.OpenTimeout, time.Now())
+	if !should {
+		if nextAfter > 0 {
+			logLine(stdout, "skip knock: public IP unchanged (%s), next refresh in about %s", publicIP, nextAfter.Round(time.Second))
+		} else {
+			logLine(stdout, "skip knock: public IP unchanged (%s), open_timeout is permanent", publicIP)
+		}
+		return
 	}
+	logLine(stdout, "refresh knock: %s", reason)
 	if err := Knock(stdout, imp, opts.Delay); err != nil {
 		logLine(stderr, "knock failed: %v", err)
 		return
 	}
 	_ = os.MkdirAll(filepath.Dir(paths.LastIP), 0700)
 	_ = os.WriteFile(paths.LastIP, []byte(publicIP+"\n"), 0600)
+	_ = os.WriteFile(paths.LastKnock, []byte(strconv.FormatInt(time.Now().Unix(), 10)+"\n"), 0600)
 	if opts.CheckAfter && len(imp.ProtectedPorts) > 0 {
 		CheckTargets(stdout, imp.Host, imp.ProtectedPorts, opts.CheckTimeout)
 	}
+}
+
+func shouldRefreshKnock(currentIP, lastIP string, lastKnock time.Time, openTimeoutText string, now time.Time) (bool, string, time.Duration) {
+	if currentIP != lastIP {
+		return true, fmt.Sprintf("public IP changed: %s -> %s", emptyDash(lastIP), currentIP), 0
+	}
+	if lastKnock.IsZero() {
+		return true, "no previous successful knock recorded", 0
+	}
+	openTimeout, permanent, err := parseOpenTimeout(openTimeoutText)
+	if err != nil {
+		return true, fmt.Sprintf("cannot parse open_timeout %q, refreshing defensively: %v", openTimeoutText, err), 0
+	}
+	if permanent {
+		return false, "", 0
+	}
+	refreshAfter := refreshAfterDuration(openTimeout)
+	elapsed := now.Sub(lastKnock)
+	if elapsed >= refreshAfter {
+		return true, fmt.Sprintf("allowlist refresh threshold reached: elapsed=%s threshold=%s open_timeout=%s", elapsed.Round(time.Second), refreshAfter.Round(time.Second), openTimeout), 0
+	}
+	return false, "", refreshAfter - elapsed
 }
 
 func DetectPublicIPv4(urls []string, timeout time.Duration) (string, error) {
@@ -705,11 +742,11 @@ func DetectPlatform(requested string) (string, error) {
 func PlatformPaths(platform string) (Paths, error) {
 	switch platform {
 	case "systemd":
-		return Paths{Platform: platform, Bin: "/usr/local/bin/knockgate-client", Dir: "/etc/knockgate-client", Config: "/etc/knockgate-client/client.conf", LastIP: "/etc/knockgate-client/last_public_ip", Service: "/etc/systemd/system/" + ServiceName + ".service"}, nil
+		return Paths{Platform: platform, Bin: "/usr/local/bin/knockgate-client", Dir: "/etc/knockgate-client", Config: "/etc/knockgate-client/client.conf", LastIP: "/etc/knockgate-client/last_public_ip", LastKnock: "/etc/knockgate-client/last_knock_unix", Service: "/etc/systemd/system/" + ServiceName + ".service"}, nil
 	case "openwrt":
-		return Paths{Platform: platform, Bin: "/usr/bin/knockgate-client", Dir: "/etc/knockgate-client", Config: "/etc/knockgate-client/client.conf", LastIP: "/etc/knockgate-client/last_public_ip", Service: "/etc/init.d/" + ServiceName}, nil
+		return Paths{Platform: platform, Bin: "/usr/bin/knockgate-client", Dir: "/etc/knockgate-client", Config: "/etc/knockgate-client/client.conf", LastIP: "/etc/knockgate-client/last_public_ip", LastKnock: "/etc/knockgate-client/last_knock_unix", Service: "/etc/init.d/" + ServiceName}, nil
 	case "asus-merlin":
-		return Paths{Platform: platform, Bin: "/opt/bin/knockgate-client", Dir: "/opt/etc/knockgate-client", Config: "/opt/etc/knockgate-client/client.conf", LastIP: "/opt/etc/knockgate-client/last_public_ip", Service: "/opt/etc/init.d/S99" + ServiceName, LogFile: "/opt/var/log/" + ServiceName + ".log"}, nil
+		return Paths{Platform: platform, Bin: "/opt/bin/knockgate-client", Dir: "/opt/etc/knockgate-client", Config: "/opt/etc/knockgate-client/client.conf", LastIP: "/opt/etc/knockgate-client/last_public_ip", LastKnock: "/opt/etc/knockgate-client/last_knock_unix", Service: "/opt/etc/init.d/S99" + ServiceName, LogFile: "/opt/var/log/" + ServiceName + ".log"}, nil
 	default:
 		return Paths{}, fmt.Errorf("unsupported platform: %s", platform)
 	}
@@ -805,7 +842,7 @@ func LoadServiceOptions(path string) (Options, Paths, error) {
 		}
 		path = paths.Config
 	} else {
-		paths = Paths{Config: path, LastIP: filepath.Join(filepath.Dir(path), "last_public_ip")}
+		paths = Paths{Config: path, LastIP: filepath.Join(filepath.Dir(path), "last_public_ip"), LastKnock: filepath.Join(filepath.Dir(path), "last_knock_unix")}
 	}
 	values, err := readConfig(path)
 	if err != nil {
@@ -1085,6 +1122,57 @@ func parseDurationDefault(text string, fallback time.Duration) time.Duration {
 	return fallback
 }
 
+func parseOpenTimeout(text string) (time.Duration, bool, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 12 * time.Hour, false, nil
+	}
+	if text == "0" {
+		return 0, true, nil
+	}
+	if d, err := parseFlexibleDuration(text); err == nil {
+		if d == 0 {
+			return 0, true, nil
+		}
+		if d < 0 {
+			return 0, false, fmt.Errorf("negative duration")
+		}
+		return d, false, nil
+	}
+	unit := text[len(text)-1:]
+	valueText := text[:len(text)-1]
+	value, err := strconv.ParseFloat(valueText, 64)
+	if err != nil {
+		return 0, false, err
+	}
+	switch unit {
+	case "d", "D":
+		return time.Duration(value * float64(24*time.Hour)), false, nil
+	case "w", "W":
+		return time.Duration(value * float64(7*24*time.Hour)), false, nil
+	default:
+		return 0, false, fmt.Errorf("unsupported duration unit %q", unit)
+	}
+}
+
+func refreshAfterDuration(openTimeout time.Duration) time.Duration {
+	if openTimeout <= 0 {
+		return 0
+	}
+	margin := openTimeout / 10
+	if margin > 5*time.Minute {
+		margin = 5 * time.Minute
+	}
+	if margin <= 0 {
+		margin = time.Second
+	}
+	refreshAfter := openTimeout - margin
+	if refreshAfter < openTimeout/2 {
+		refreshAfter = openTimeout / 2
+	}
+	return refreshAfter
+}
+
 func parseFlexibleDuration(text string) (time.Duration, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -1219,6 +1307,21 @@ func readSmall(path string) string {
 		data = data[:4096]
 	}
 	return string(data)
+}
+
+func readUnixTime(path string) (time.Time, error) {
+	text := strings.TrimSpace(readSmall(path))
+	if text == "" {
+		return time.Time{}, nil
+	}
+	ts, err := strconv.ParseInt(text, 10, 64)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if ts <= 0 {
+		return time.Time{}, nil
+	}
+	return time.Unix(ts, 0), nil
 }
 
 func emptyDash(s string) string {
