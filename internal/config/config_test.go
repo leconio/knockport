@@ -56,3 +56,22 @@ func TestValidateRejectsUnsafeInterface(t *testing.T) {
 		t.Fatal("expected unsafe interface to fail")
 	}
 }
+
+func TestValidateProtectHook(t *testing.T) {
+	cfg := Config{
+		ProtectedPorts:    []ProtectedPort{{Port: 5432, Proto: ProtoTCP}},
+		KnockPorts:        []int{30001, 30002},
+		OpenTimeout:       "12h",
+		SeqTimeoutSeconds: 10,
+		HMACWindowSeconds: 60,
+		Secret:            "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI",
+		ProtectHook:       HookPrerouting,
+	}
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("expected prerouting hook to validate: %v", err)
+	}
+	cfg.ProtectHook = "forward"
+	if err := Validate(cfg); err == nil {
+		t.Fatal("expected invalid hook to fail")
+	}
+}

@@ -326,6 +326,10 @@ func Reload() error {
 }
 
 func ensureFirewallCanTakeover(cfg config.Config) error {
+	if cfg.ProtectHook != config.HookInput {
+		fmt.Println(ui.Yellow(ui.T("当前保护位置是 prerouting：KnockGate 会在路由和 DNAT 前优先丢弃未敲门来源。后续 input/forward/云防火墙仍必须允许已敲门流量，否则敲门成功后连接仍可能失败。", "Current protect hook is prerouting: KnockGate drops non-allowlisted sources before routing and DNAT. Later input/forward/cloud firewalls must still allow knocked traffic, otherwise connections may still fail after a successful knock.")))
+		return nil
+	}
 	issues, err := nft.CheckInputTakeover(cfg)
 	if err != nil {
 		return err
@@ -333,12 +337,16 @@ func ensureFirewallCanTakeover(cfg config.Config) error {
 	if len(issues) == 0 {
 		return nil
 	}
-	fmt.Println(ui.Red(ui.T("KnockGate 无法可靠接管这些保护端口：", "KnockGate cannot reliably protect these ports:")))
+	fmt.Println(ui.Yellow(ui.T("KnockGate 无法从当前 nft 规则中确认这些保护端口已被原防火墙放行：", "KnockGate cannot confirm from current nft rules that these protected ports are allowed by the existing firewall:")))
 	for _, issue := range issues {
 		fmt.Printf("  - %s\n", issue)
 	}
-	fmt.Println(ui.Yellow(ui.T("请换一个原防火墙已允许的保护端口，或先在原防火墙中放行该端口后再运行 install/reset/update。", "Choose a protected port already allowed by the existing firewall, or allow the port in the existing firewall before running install/reset/update.")))
-	return errors.New(ui.T("当前防火墙会在 KnockGate 放行后继续丢弃保护端口", "existing firewall would still drop protected ports after KnockGate allows them"))
+	fmt.Println(ui.Yellow(ui.T("这不一定表示端口没开；它只表示 KnockGate 没能解析出明确的本机 nft accept 规则。规则通过 jump/goto、firewalld/ufw、iptables-nft 兼容链、变量 set 或上游云防火墙放行时，都可能出现这种提示。", "This does not necessarily mean the port is closed; it only means KnockGate could not parse an explicit local nft accept rule. Rules through jump/goto, firewalld/ufw, iptables-nft compatibility chains, variable sets, or upstream cloud firewalls can trigger this warning.")))
+	fmt.Println(ui.Yellow(ui.T("如果判断错误，敲门成功后保护端口仍可能打不开；届时需要调整原防火墙规则或更换保护端口。", "If this judgement is wrong, protected ports may still be unreachable after a successful knock; adjust the existing firewall or choose another protected port.")))
+	if ui.Confirm(ui.T("你确认这些保护端口已经开放，并继续应用 KnockGate 配置？", "Confirm these protected ports are already open and continue applying KnockGate config?"), false) {
+		return nil
+	}
+	return errors.New(ui.T("已取消：未确认保护端口已开放", "cancelled: protected ports were not confirmed open"))
 }
 
 func ClearTable() error {
@@ -433,9 +441,11 @@ func PromptConfig(current config.Config) (config.Config, error) {
 	fmt.Println(ui.Red(ui.T("警告：Go 版 KnockGate 使用 libpcap 抓包，不监听敲门端口。", "WARNING: KnockGate Go uses libpcap capture and does not listen on knock ports.")))
 	fmt.Println(ui.Yellow(ui.T("它只管理 table inet knockgate，只 drop 你输入的保护端口和协议。SSH 端口规则不读取、不询问、不修改。", "It only manages table inet knockgate and only drops the protected ports/protocols you enter. SSH rules are not read, prompted for, or modified.")))
 	fmt.Println(ui.Yellow(ui.T("云防火墙必须允许 UDP 敲门包到达主机；主机 nftables 不需要开放敲门端口。", "Cloud firewalls must allow UDP knock packets to reach the host; host nftables does not need to open knock ports.")))
+	fmt.Println(ui.Cyan(ui.T("保护位置说明：prerouting 是默认值，最先影响入站包，适合公网入口和 DNAT/转发端口；input 只影响发往本机服务的流量。", "Protect hook: prerouting is the default and affects inbound packets earliest, suitable for public ingress and DNAT/forwarded ports; input only affects traffic delivered to local services.")))
 	fmt.Println()
 
 	protected := promptProtectedPorts(ui.T("保护端口，多个用逗号分隔，可写 2345、2345/tcp、2345/udp", "Protected ports, comma-separated; use 2345, 2345/tcp, or 2345/udp"), current.ProtectedPorts)
+	protectHook := promptProtectHook(current.ProtectHook)
 	avoid := append([]int{}, config.ProtectedPortNumbers(protected)...)
 	avoid = append(avoid, detectListeningPorts()...)
 	knocks := rollKnockPorts(avoid, config.DefaultKnockCount)
@@ -470,6 +480,7 @@ func PromptConfig(current config.Config) (config.Config, error) {
 		HMACWindowSeconds: hmacWindow,
 		Secret:            secret,
 		Interface:         iface,
+		ProtectHook:       protectHook,
 		Mode:              config.DefaultMode,
 	}
 	PrintSummary(next)
@@ -484,6 +495,7 @@ func PrintSummary(cfg config.Config) {
 	fmt.Println(ui.Cyan(ui.T("配置摘要", "Configuration summary")))
 	fmt.Println(ui.T("模式：Go + libpcap UDP 顺序敲门 + 最后一步 HMAC + nftables 保护端口叠加", "Mode: Go + libpcap UDP sequence knock + final-step HMAC + nftables protective overlay"))
 	fmt.Printf("%s: %s\n", ui.T("保护端口", "Protected ports"), config.JoinProtectedPorts(cfg.ProtectedPorts))
+	fmt.Printf("%s: %s\n", ui.T("保护位置", "Protect hook"), protectHookSummary(cfg.ProtectHook))
 	fmt.Printf("%s: %s\n", ui.T("UDP 敲门序列", "UDP knock sequence"), strings.ReplaceAll(config.JoinPorts(cfg.KnockPorts), ",", " -> "))
 	fmt.Printf("%s: %s\n", ui.T("开门时长", "Open timeout"), cfg.OpenTimeout)
 	fmt.Printf("%s: %ds\n", ui.T("序列超时", "Sequence timeout"), cfg.SeqTimeoutSeconds)
@@ -508,6 +520,7 @@ func ImportURL() error {
 	values.Set("host", host)
 	values.Set("knock_ports", config.JoinPorts(cfg.KnockPorts))
 	values.Set("protected_ports", config.JoinProtectedPorts(cfg.ProtectedPorts))
+	values.Set("protect_hook", string(cfg.ProtectHook))
 	values.Set("seq_timeout", strconv.Itoa(cfg.SeqTimeoutSeconds))
 	values.Set("open_timeout", cfg.OpenTimeout)
 	values.Set("hmac_window", strconv.Itoa(cfg.HMACWindowSeconds))
@@ -542,6 +555,29 @@ func promptProtectedPorts(label string, def []config.ProtectedPort) []config.Pro
 			return ports
 		}
 		fmt.Println(ui.Yellow(err.Error()))
+	}
+}
+
+func promptProtectHook(def config.ProtectHook) config.ProtectHook {
+	if !config.ValidProtectHook(def) {
+		def = config.DefaultProtectHook
+	}
+	for {
+		text := strings.ToLower(ui.Prompt(ui.T("保护位置：prerouting=最早入口/DNAT/转发，input=本机服务", "Protect hook: prerouting=earliest ingress/DNAT/forward, input=local services"), string(def)))
+		hook := config.ProtectHook(text)
+		if config.ValidProtectHook(hook) {
+			return hook
+		}
+		fmt.Println(ui.Yellow(ui.T("只支持 input 或 prerouting。默认推荐 prerouting。", "Only input or prerouting are supported. prerouting is recommended by default.")))
+	}
+}
+
+func protectHookSummary(hook config.ProtectHook) string {
+	switch hook {
+	case config.HookInput:
+		return ui.T("input（只影响发往本机服务的流量）", "input (only traffic delivered to local services)")
+	default:
+		return ui.T("prerouting（默认；最先影响入站包，适合公网入口、DNAT 和转发端口）", "prerouting (default; earliest inbound hook, suitable for public ingress, DNAT, and forwarded ports)")
 	}
 }
 

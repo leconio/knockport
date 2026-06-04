@@ -29,6 +29,7 @@ const (
 	DefaultSeqTimeout     = 10
 	DefaultHMACWindow     = 60
 	DefaultKnockCount     = 6
+	DefaultProtectHook    = HookPrerouting
 )
 
 // Config 是服务端唯一配置来源。Go 版不再保存 SSH 端口，因为 KnockGate 不接管 SSH。
@@ -40,8 +41,16 @@ type Config struct {
 	HMACWindowSeconds int
 	Secret            string
 	Interface         string
+	ProtectHook       ProtectHook
 	Mode              string
 }
+
+type ProtectHook string
+
+const (
+	HookInput      ProtectHook = "input"
+	HookPrerouting ProtectHook = "prerouting"
+)
 
 type Proto string
 
@@ -78,6 +87,7 @@ func Load() (Config, error) {
 		HMACWindowSeconds: intValue(values["HMAC_WINDOW"], DefaultHMACWindow),
 		Secret:            values["SECRET"],
 		Interface:         values["INTERFACE"],
+		ProtectHook:       ProtectHook(first(values["PROTECT_HOOK"], values["HOOK"], string(DefaultProtectHook))),
 		Mode:              first(values["MODE"], DefaultMode),
 	}
 	if cfg.Secret == "" {
@@ -102,6 +112,7 @@ func LoadOrDefault() Config {
 		SeqTimeoutSeconds: DefaultSeqTimeout,
 		HMACWindowSeconds: DefaultHMACWindow,
 		Secret:            secret,
+		ProtectHook:       DefaultProtectHook,
 		Mode:              DefaultMode,
 	}
 }
@@ -121,8 +132,9 @@ SEQ_TIMEOUT=%d
 HMAC_WINDOW=%d
 SECRET=%s
 INTERFACE=%s
+PROTECT_HOOK=%s
 MODE=%s
-`, quote(JoinProtectedPorts(cfg.ProtectedPorts)), quote(JoinPorts(cfg.KnockPorts)), quote(cfg.OpenTimeout), cfg.SeqTimeoutSeconds, cfg.HMACWindowSeconds, quote(cfg.Secret), quote(cfg.Interface), quote(DefaultMode))
+`, quote(JoinProtectedPorts(cfg.ProtectedPorts)), quote(JoinPorts(cfg.KnockPorts)), quote(cfg.OpenTimeout), cfg.SeqTimeoutSeconds, cfg.HMACWindowSeconds, quote(cfg.Secret), quote(cfg.Interface), quote(string(cfg.ProtectHook)), quote(DefaultMode))
 	return os.WriteFile(File, []byte(data), 0600)
 }
 
@@ -307,6 +319,10 @@ func ValidInterface(value string) bool {
 	return regexp.MustCompile(`^[A-Za-z0-9_.:@-]{1,64}$`).MatchString(value)
 }
 
+func ValidProtectHook(value ProtectHook) bool {
+	return value == HookInput || value == HookPrerouting
+}
+
 func Validate(cfg Config) error {
 	if len(cfg.ProtectedPorts) == 0 {
 		return errors.New("保护端口列表为空")
@@ -328,6 +344,9 @@ func Validate(cfg Config) error {
 	}
 	if !ValidInterface(cfg.Interface) {
 		return fmt.Errorf("INTERFACE 格式无效：%s", cfg.Interface)
+	}
+	if !ValidProtectHook(cfg.ProtectHook) {
+		return fmt.Errorf("PROTECT_HOOK 格式无效：%s，只支持 input/prerouting", cfg.ProtectHook)
 	}
 	return nil
 }

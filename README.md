@@ -186,6 +186,7 @@ SEQ_TIMEOUT=10
 HMAC_WINDOW=60
 SECRET="base64url-secret"
 INTERFACE="eth0"
+PROTECT_HOOK="prerouting"
 MODE="go_hmac_pcap_overlay"
 ```
 
@@ -203,20 +204,31 @@ KnockGate manages only this table:
 table inet knockgate
 ```
 
-The table has an input hook with `policy accept`. It only drops configured protected ports before the rest of the host firewall continues processing traffic.
+By default, KnockGate creates a `prerouting` hook with `priority raw` and `policy accept`. This is the earliest practical protection point for inbound traffic, including public ingress ports and DNAT/forwarded ports. During install/reset you can choose `input` instead when the protected ports are local services on the same machine.
+
+Hook choices:
+
+```text
+prerouting  default; affects inbound packets before route decision and DNAT/forward handling
+input       affects only packets delivered to local services on this host
+```
 
 For a protected bare port such as `2345`, the effective rules are:
 
 ```nft
-ip saddr @knock_allow_temp_v4 tcp dport 2345 accept
-tcp dport 2345 drop
-ip saddr @knock_allow_temp_v4 udp dport 2345 accept
-udp dport 2345 drop
+chain prerouting {
+    type filter hook prerouting priority raw; policy accept;
+
+    ip saddr @knock_allow_temp_v4 tcp dport 2345 accept
+    tcp dport 2345 drop
+    ip saddr @knock_allow_temp_v4 udp dport 2345 accept
+    udp dport 2345 drop
+}
 ```
 
 Knock ports are not accepted by nftables. The service reads UDP packets from the interface through pcap, so KnockGate can still see knock packets and update its temporary allowlist even when protected ports are currently dropped.
 
-KnockGate's allow rule is not a bypass for every other host firewall rule. If another nftables base chain, firewalld, ufw, or a provider firewall drops the protected service after KnockGate accepts it, the connection can still fail. Configure the existing firewall to allow traffic that KnockGate has already allowlisted, or use KnockGate as the only rule set protecting that specific service port.
+KnockGate's allow rule is not a bypass for every other host firewall rule. An `accept` verdict in an early hook only lets the packet continue through later hooks. If another nftables base chain, firewalld, ufw, or a provider firewall drops the protected service after KnockGate accepts it, the connection can still fail. Configure the existing firewall to allow traffic that KnockGate has already allowlisted, or use KnockGate as the only rule set protecting that specific service port.
 
 Upstream firewalls are different. Cloud security groups, provider firewalls, or routers must allow the UDP knock packets to reach the server.
 

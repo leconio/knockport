@@ -42,6 +42,7 @@ func WriteConfig(cfg config.Config) error {
 	tcpPorts := config.ProtectedTCPPorts(cfg.ProtectedPorts)
 	udpPorts := config.ProtectedUDPPorts(cfg.ProtectedPorts)
 	rules := protectedRules(tcpPorts, udpPorts)
+	hook := chainHook(cfg)
 	data := fmt.Sprintf(`#!/usr/sbin/nft -f
 
 # 由 KnockGate Go 管理。只定义 table inet knockgate，不修改系统原防火墙。
@@ -52,13 +53,13 @@ table %s %s {
         flags timeout
     }
 
-    chain input {
-        type filter hook input priority -150; policy accept;
+    chain %s {
+        type filter hook %s priority raw; policy accept;
 
 %s
     }
 }
-`, Family, Table, Set, rules)
+`, Family, Table, Set, hook.chainName, hook.hookName, rules)
 	return os.WriteFile(config.NFTFile, []byte(data), 0600)
 }
 
@@ -89,7 +90,7 @@ func CheckInputTakeover(cfg config.Config) ([]TakeoverIssue, error) {
 	}
 	var laterDropChains []inputBaseChain
 	for _, chain := range chains {
-		if chain.priority > -150 && chain.policy == "drop" {
+		if chain.priority > -300 && chain.policy == "drop" {
 			laterDropChains = append(laterDropChains, chain)
 		}
 	}
@@ -107,7 +108,7 @@ func CheckInputTakeover(cfg config.Config) ([]TakeoverIssue, error) {
 				issues = append(issues, TakeoverIssue{
 					Port:   protected.Port,
 					Proto:  proto,
-					Reason: "后续 input 默认 drop 防火墙没有显式放行该端口；KnockGate 放行后仍可能被原防火墙丢弃。请换一个原防火墙已允许的保护端口，或先在原防火墙放行该端口。",
+					Reason: "检测到后续 input 默认 drop 防火墙，但无法从本机 nft ruleset 确认该端口已显式放行；KnockGate 放行后仍可能被原防火墙丢弃。如果你确认该端口已由原防火墙或上游规则放行，可以继续。",
 				})
 			}
 		}
@@ -128,12 +129,15 @@ func ensureTable() error {
 func applyObjects(cfg config.Config) error {
 	tcpPorts := config.ProtectedTCPPorts(cfg.ProtectedPorts)
 	udpPorts := config.ProtectedUDPPorts(cfg.ProtectedPorts)
+	hook := chainHook(cfg)
 	var setup []string
-	if objectExists("chain", "input") {
-		setup = append(setup,
-			fmt.Sprintf("flush chain %s %s input", Family, Table),
-			fmt.Sprintf("delete chain %s %s input", Family, Table),
-		)
+	for _, chain := range []string{"input", "prerouting"} {
+		if objectExists("chain", chain) {
+			setup = append(setup,
+				fmt.Sprintf("flush chain %s %s %s", Family, Table, chain),
+				fmt.Sprintf("delete chain %s %s %s", Family, Table, chain),
+			)
+		}
 	}
 	if !objectExists("set", Set) {
 		setup = append(setup, fmt.Sprintf(`add set %s %s %s {
@@ -145,12 +149,12 @@ func applyObjects(cfg config.Config) error {
 
 %s
 
-add chain %s %s input {
-    type filter hook input priority -150; policy accept;
+add chain %s %s %s {
+    type filter hook %s priority raw; policy accept;
 }
 
 %s
-`, strings.Join(setup, "\n"), Family, Table, protectedAddRules(tcpPorts, udpPorts))
+`, strings.Join(setup, "\n"), Family, Table, hook.chainName, hook.hookName, protectedAddRules(hook.chainName, tcpPorts, udpPorts))
 	if err := os.WriteFile(config.NFTApplyFile, []byte(data), 0600); err != nil {
 		return err
 	}
@@ -266,23 +270,35 @@ func protectedRules(tcpPorts, udpPorts []int) string {
 	return strings.Join(lines, "\n")
 }
 
-func protectedAddRules(tcpPorts, udpPorts []int) string {
+func protectedAddRules(chain string, tcpPorts, udpPorts []int) string {
 	var lines []string
 	if len(tcpPorts) > 0 {
 		expr := portExpr(tcpPorts)
 		lines = append(lines,
-			fmt.Sprintf("add rule %s %s input ip saddr @%s tcp dport %s accept", Family, Table, Set, expr),
-			fmt.Sprintf("add rule %s %s input tcp dport %s drop", Family, Table, expr),
+			fmt.Sprintf("add rule %s %s %s ip saddr @%s tcp dport %s accept", Family, Table, chain, Set, expr),
+			fmt.Sprintf("add rule %s %s %s tcp dport %s drop", Family, Table, chain, expr),
 		)
 	}
 	if len(udpPorts) > 0 {
 		expr := portExpr(udpPorts)
 		lines = append(lines,
-			fmt.Sprintf("add rule %s %s input ip saddr @%s udp dport %s accept", Family, Table, Set, expr),
-			fmt.Sprintf("add rule %s %s input udp dport %s drop", Family, Table, expr),
+			fmt.Sprintf("add rule %s %s %s ip saddr @%s udp dport %s accept", Family, Table, chain, Set, expr),
+			fmt.Sprintf("add rule %s %s %s udp dport %s drop", Family, Table, chain, expr),
 		)
 	}
 	return strings.Join(lines, "\n")
+}
+
+type hookSpec struct {
+	chainName string
+	hookName  string
+}
+
+func chainHook(cfg config.Config) hookSpec {
+	if cfg.ProtectHook == config.HookInput {
+		return hookSpec{chainName: "input", hookName: "input"}
+	}
+	return hookSpec{chainName: "prerouting", hookName: "prerouting"}
 }
 
 type inputBaseChain struct {

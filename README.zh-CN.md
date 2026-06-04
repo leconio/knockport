@@ -184,6 +184,7 @@ SEQ_TIMEOUT=10
 HMAC_WINDOW=60
 SECRET="base64url-secret"
 INTERFACE="eth0"
+PROTECT_HOOK="prerouting"
 MODE="go_hmac_pcap_overlay"
 ```
 
@@ -201,20 +202,31 @@ KnockGate 只管理：
 table inet knockgate
 ```
 
-这个表的 input hook 使用 `policy accept`，只对配置的保护端口做提前 drop。未匹配 KnockGate 规则的流量会继续走系统原有防火墙逻辑。
+默认情况下，KnockGate 会创建 `prerouting` hook，使用 `priority raw` 和 `policy accept`。这是入站流量最早的保护点，适合公网入口端口、DNAT 和转发端口。如果保护的是本机服务，可以在安装/重置时选择 `input`。
+
+保护位置区别：
+
+```text
+prerouting  默认值；路由判断和 DNAT/转发处理前影响入站包
+input       只影响最终发往本机服务的包
+```
 
 例如保护端口写 `2345` 时，规则效果为：
 
 ```nft
-ip saddr @knock_allow_temp_v4 tcp dport 2345 accept
-tcp dport 2345 drop
-ip saddr @knock_allow_temp_v4 udp dport 2345 accept
-udp dport 2345 drop
+chain prerouting {
+    type filter hook prerouting priority raw; policy accept;
+
+    ip saddr @knock_allow_temp_v4 tcp dport 2345 accept
+    tcp dport 2345 drop
+    ip saddr @knock_allow_temp_v4 udp dport 2345 accept
+    udp dport 2345 drop
+}
 ```
 
 敲门端口不会在 nftables 中放行。服务端通过 pcap 从网卡读取 UDP 包，因此即使保护端口当前正在被 drop，KnockGate 仍然可以看到敲门包并写入临时白名单。
 
-KnockGate 的 allow 规则不是对所有主机防火墙规则的旁路。如果其他 nftables base chain、firewalld、ufw 或云厂商防火墙在 KnockGate accept 之后继续 drop 保护服务，连接仍然会失败。需要让原防火墙允许已经进入 KnockGate 临时白名单的流量，或者把该服务端口只交给 KnockGate 保护。
+KnockGate 的 allow 规则不是对所有主机防火墙规则的旁路。早期 hook 里的 `accept` 只是让包继续进入后续 hook。如果其他 nftables base chain、firewalld、ufw 或云厂商防火墙在 KnockGate accept 之后继续 drop 保护服务，连接仍然会失败。需要让原防火墙允许已经进入 KnockGate 临时白名单的流量，或者把该服务端口只交给 KnockGate 保护。
 
 上游防火墙不一样。云厂商安全组、机房防火墙或路由器必须允许 UDP 敲门包到达服务器。
 

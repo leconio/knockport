@@ -3,6 +3,8 @@ package nft
 import (
 	"strings"
 	"testing"
+
+	"github.com/leconio/knockport/internal/config"
 )
 
 func TestProtectedRulesRenderTCPAndUDP(t *testing.T) {
@@ -73,5 +75,22 @@ func TestChainAcceptsPortSetAndRange(t *testing.T) {
 	}
 	if chainAcceptsPort(chain, 30005, "tcp") {
 		t.Fatal("tcp must not match udp range")
+	}
+}
+
+func TestChainHookDefaultsToPrerouting(t *testing.T) {
+	hook := chainHook(config.Config{ProtectHook: config.HookPrerouting})
+	if hook.chainName != "prerouting" || hook.hookName != "prerouting" {
+		t.Fatalf("unexpected hook: %#v", hook)
+	}
+}
+
+func TestProtectedAddRulesUsesSelectedChain(t *testing.T) {
+	rules := protectedAddRules("prerouting", []int{5432}, nil)
+	if !strings.Contains(rules, "add rule inet knockgate prerouting ip saddr @knock_allow_temp_v4 tcp dport 5432 accept") {
+		t.Fatalf("missing prerouting accept rule:\n%s", rules)
+	}
+	if strings.Contains(rules, " knockgate input ") {
+		t.Fatalf("must not write input rules when prerouting is selected:\n%s", rules)
 	}
 }
