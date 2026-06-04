@@ -90,7 +90,7 @@ func processPacket(cfg config.Config, secret []byte, state *State, packet gopack
 	}
 	destPort := int(udp.DstPort)
 	if state.Accept(cfg, secret, src.String(), destPort, udp.Payload, time.Now()) {
-		if err := nft.AddAllow(src.String(), cfg.OpenTimeout); err != nil {
+		if err := nft.AddAllow(src.String(), cfg.OpenTimeout, cfg); err != nil {
 			log.Printf("写入 nft 临时白名单失败：source=%s err=%v", src.String(), err)
 			return
 		}

@@ -83,11 +83,8 @@ func Load() (Config, error) {
 	if cfg.Secret == "" {
 		return Config{}, errors.New("配置缺少 SECRET，请执行 install/reset 重新生成 HMAC 密钥")
 	}
-	if _, err := DecodeSecret(cfg.Secret); err != nil {
+	if err := Validate(cfg); err != nil {
 		return Config{}, err
-	}
-	if !ValidTimeout(cfg.OpenTimeout) {
-		return Config{}, fmt.Errorf("OPEN_TIMEOUT 格式无效：%s", cfg.OpenTimeout)
 	}
 	return cfg, nil
 }
@@ -111,18 +108,21 @@ func LoadOrDefault() Config {
 
 // Save 写入 root-only 配置文件。SECRET 会进入二维码，必须按敏感信息处理。
 func Save(cfg Config) error {
+	if err := Validate(cfg); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(Dir, 0700); err != nil {
 		return err
 	}
-	data := fmt.Sprintf(`PROTECTED_PORTS="%s"
-KNOCK_PORTS="%s"
-OPEN_TIMEOUT="%s"
+	data := fmt.Sprintf(`PROTECTED_PORTS=%s
+KNOCK_PORTS=%s
+OPEN_TIMEOUT=%s
 SEQ_TIMEOUT=%d
 HMAC_WINDOW=%d
-SECRET="%s"
-INTERFACE="%s"
-MODE="%s"
-`, JoinProtectedPorts(cfg.ProtectedPorts), JoinPorts(cfg.KnockPorts), cfg.OpenTimeout, cfg.SeqTimeoutSeconds, cfg.HMACWindowSeconds, cfg.Secret, cfg.Interface, DefaultMode)
+SECRET=%s
+INTERFACE=%s
+MODE=%s
+`, quote(JoinProtectedPorts(cfg.ProtectedPorts)), quote(JoinPorts(cfg.KnockPorts)), quote(cfg.OpenTimeout), cfg.SeqTimeoutSeconds, cfg.HMACWindowSeconds, quote(cfg.Secret), quote(cfg.Interface), quote(DefaultMode))
 	return os.WriteFile(File, []byte(data), 0600)
 }
 
@@ -142,9 +142,22 @@ func ParseFile(path string) (map[string]string, error) {
 		if !ok {
 			continue
 		}
-		values[strings.TrimSpace(key)] = strings.Trim(strings.TrimSpace(value), `"`)
+		values[strings.TrimSpace(key)] = parseValue(strings.TrimSpace(value))
 	}
 	return values, scanner.Err()
+}
+
+func parseValue(value string) string {
+	if len(value) >= 2 && value[0] == '"' {
+		if parsed, err := strconv.Unquote(value); err == nil {
+			return parsed
+		}
+	}
+	return strings.Trim(value, `"`)
+}
+
+func quote(value string) string {
+	return strconv.Quote(value)
 }
 
 func ParsePorts(text string, sequence bool) ([]int, error) {
@@ -285,6 +298,38 @@ func ValidPort(port int) bool {
 
 func ValidTimeout(value string) bool {
 	return regexp.MustCompile(`^[0-9]+(ms|s|m|h|d|w)?$`).MatchString(value)
+}
+
+func ValidInterface(value string) bool {
+	if value == "" {
+		return true
+	}
+	return regexp.MustCompile(`^[A-Za-z0-9_.:@-]{1,64}$`).MatchString(value)
+}
+
+func Validate(cfg Config) error {
+	if len(cfg.ProtectedPorts) == 0 {
+		return errors.New("保护端口列表为空")
+	}
+	if len(cfg.KnockPorts) == 0 {
+		return errors.New("敲门端口列表为空")
+	}
+	if !ValidTimeout(cfg.OpenTimeout) {
+		return fmt.Errorf("OPEN_TIMEOUT 格式无效：%s", cfg.OpenTimeout)
+	}
+	if cfg.SeqTimeoutSeconds <= 0 {
+		return errors.New("SEQ_TIMEOUT 必须是正整数")
+	}
+	if cfg.HMACWindowSeconds <= 0 {
+		return errors.New("HMAC_WINDOW 必须是正整数")
+	}
+	if _, err := DecodeSecret(cfg.Secret); err != nil {
+		return err
+	}
+	if !ValidInterface(cfg.Interface) {
+		return fmt.Errorf("INTERFACE 格式无效：%s", cfg.Interface)
+	}
+	return nil
 }
 
 func GenerateSecret() (string, error) {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -138,6 +139,9 @@ func Install() error {
 	if err != nil {
 		return err
 	}
+	if err := ensureFirewallCanTakeover(cfg); err != nil {
+		return err
+	}
 	if err := config.Save(cfg); err != nil {
 		return err
 	}
@@ -171,6 +175,9 @@ func Update() error {
 	if err != nil {
 		return err
 	}
+	if err := ensureFirewallCanTakeover(cfg); err != nil {
+		return err
+	}
 	if err := nft.WriteConfig(cfg); err != nil {
 		return err
 	}
@@ -189,6 +196,9 @@ func Reset() error {
 	}
 	cfg, err := PromptConfig(config.LoadOrDefault())
 	if err != nil {
+		return err
+	}
+	if err := ensureFirewallCanTakeover(cfg); err != nil {
 		return err
 	}
 	if err := config.Save(cfg); err != nil {
@@ -237,7 +247,7 @@ func AddAllow(ip string) error {
 	if err != nil {
 		return err
 	}
-	return nft.AddAllow(ip, cfg.OpenTimeout)
+	return nft.AddAllow(ip, cfg.OpenTimeout, cfg)
 }
 
 func FlushAllowlist() error {
@@ -259,7 +269,26 @@ func Reload() error {
 	if err != nil {
 		return err
 	}
+	if err := ensureFirewallCanTakeover(cfg); err != nil {
+		return err
+	}
 	return nft.Apply(cfg)
+}
+
+func ensureFirewallCanTakeover(cfg config.Config) error {
+	issues, err := nft.CheckInputTakeover(cfg)
+	if err != nil {
+		return err
+	}
+	if len(issues) == 0 {
+		return nil
+	}
+	fmt.Println(ui.Red(ui.T("KnockGate 无法可靠接管这些保护端口：", "KnockGate cannot reliably protect these ports:")))
+	for _, issue := range issues {
+		fmt.Printf("  - %s\n", issue)
+	}
+	fmt.Println(ui.Yellow(ui.T("请换一个原防火墙已允许的保护端口，或先在原防火墙中放行该端口后再运行 install/reset/update。", "Choose a protected port already allowed by the existing firewall, or allow the port in the existing firewall before running install/reset/update.")))
+	return errors.New(ui.T("当前防火墙会在 KnockGate 放行后继续丢弃保护端口", "existing firewall would still drop protected ports after KnockGate allows them"))
 }
 
 func ClearTable() error {
@@ -307,7 +336,7 @@ func Menu() error {
 		fmt.Println(ui.T("6. 查看临时白名单", "6. Show temporary allowlist"))
 		fmt.Println(ui.T("7. 添加 IP 到临时白名单", "7. Add IP to temporary allowlist"))
 		fmt.Println(ui.T("8. 清空临时白名单", "8. Flush temporary allowlist"))
-		fmt.Println(ui.T("9. 重新加载 KnockGate 规则（清空临时白名单）", "9. Reload KnockGate rules (flush temporary allowlist)"))
+		fmt.Println(ui.T("9. 重新加载 KnockGate 规则（保留临时白名单）", "9. Reload KnockGate rules (keep temporary allowlist)"))
 		fmt.Println(ui.T("10. 清空 KnockGate 防火墙表", "10. Clear KnockGate firewall table"))
 		fmt.Println(ui.T("11. 生成客户端导入二维码", "11. Generate client import QR"))
 		fmt.Println(ui.T("12. 卸载", "12. Uninstall"))
@@ -330,7 +359,7 @@ func Menu() error {
 		case "8":
 			_ = FlushAllowlist()
 		case "9":
-			if ui.Confirm(ui.T("重新加载只会重建 KnockGate 自己的 nft 表，但会清空临时白名单。继续？", "Reload only rebuilds KnockGate's own nft table, but it flushes the temporary allowlist. Continue?"), false) {
+			if ui.Confirm(ui.T("重新加载只会重建 KnockGate 自己的 nft 规则，并保留临时白名单。继续？", "Reload only rebuilds KnockGate's own nft rules and keeps the temporary allowlist. Continue?"), false) {
 				_ = Reload()
 			}
 		case "10":
@@ -367,6 +396,10 @@ func PromptConfig(current config.Config) (config.Config, error) {
 	seqTimeout := promptInt(ui.T("序列超时秒数", "Sequence timeout seconds"), valueInt(current.SeqTimeoutSeconds, config.DefaultSeqTimeout))
 	hmacWindow := promptInt(ui.T("timestamp/HMAC 容忍窗口秒数", "Timestamp/HMAC tolerance window seconds"), valueInt(current.HMACWindowSeconds, config.DefaultHMACWindow))
 	iface := ui.Prompt(ui.T("pcap 抓包网卡", "pcap capture interface"), valueString(current.Interface, detectDefaultInterface()))
+	for !config.ValidInterface(iface) {
+		fmt.Println(ui.Yellow(ui.T("网卡名只能包含字母、数字、点、冒号、下划线、@ 和连字符。", "Interface name may only contain letters, numbers, dot, colon, underscore, @, and hyphen.")))
+		iface = ui.Prompt(ui.T("pcap 抓包网卡", "pcap capture interface"), detectDefaultInterface())
+	}
 	secret := current.Secret
 	if secret == "" || ui.Confirm(ui.T("重新生成 HMAC 密钥？", "Generate a new HMAC secret?"), secret == "") {
 		generated, err := config.GenerateSecret()
@@ -411,13 +444,22 @@ func ImportURL() error {
 		return err
 	}
 	host := detectHost()
-	url := fmt.Sprintf("knockgate://import/v1?scheme=udp-hmac&host=%s&knock_ports=%s&protected_ports=%s&seq_timeout=%d&open_timeout=%s&hmac_window=%d&secret=%s&label=KnockGate",
-		escape(host), escape(config.JoinPorts(cfg.KnockPorts)), escape(config.JoinProtectedPorts(cfg.ProtectedPorts)), cfg.SeqTimeoutSeconds, escape(cfg.OpenTimeout), cfg.HMACWindowSeconds, escape(cfg.Secret))
+	values := url.Values{}
+	values.Set("scheme", "udp-hmac")
+	values.Set("host", host)
+	values.Set("knock_ports", config.JoinPorts(cfg.KnockPorts))
+	values.Set("protected_ports", config.JoinProtectedPorts(cfg.ProtectedPorts))
+	values.Set("seq_timeout", strconv.Itoa(cfg.SeqTimeoutSeconds))
+	values.Set("open_timeout", cfg.OpenTimeout)
+	values.Set("hmac_window", strconv.Itoa(cfg.HMACWindowSeconds))
+	values.Set("secret", cfg.Secret)
+	values.Set("label", "KnockGate")
+	importURL := "knockgate://import/v1?" + values.Encode()
 	fmt.Println(ui.Cyan(ui.T("客户端导入 URL：", "Client import URL:")))
-	fmt.Println(url)
+	fmt.Println(importURL)
 	if _, err := exec.LookPath("qrencode"); err == nil {
 		fmt.Println()
-		_ = system.Stream("qrencode", "-t", "ANSIUTF8", url)
+		_ = system.Stream("qrencode", "-t", "ANSIUTF8", importURL)
 	}
 	return nil
 }
@@ -546,9 +588,4 @@ func contains(values []int, needle int) bool {
 		}
 	}
 	return false
-}
-
-func escape(value string) string {
-	replacer := strings.NewReplacer(" ", "%20", ",", "%2C", ":", "%3A", "/", "%2F", "+", "%2B", "=", "%3D")
-	return replacer.Replace(value)
 }

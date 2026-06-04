@@ -29,3 +29,49 @@ func TestProtectedRulesCanRenderUDPOnly(t *testing.T) {
 		t.Fatalf("missing udp drop rule:\n%s", rules)
 	}
 }
+
+func TestParseInputBaseChainsFindsLaterDrop(t *testing.T) {
+	ruleset := `table inet knockgate {
+	chain input {
+		type filter hook input priority mangle; policy accept;
+		tcp dport 23456 drop # handle 1
+	}
+}
+table inet host_filter {
+	chain input {
+		type filter hook input priority filter; policy drop;
+		ct state established,related accept # handle 2
+		tcp dport 29312 accept # handle 3
+	}
+}`
+	chains := parseInputBaseChains(ruleset)
+	if len(chains) != 2 {
+		t.Fatalf("expected 2 input chains, got %d: %#v", len(chains), chains)
+	}
+	if chains[1].priority != 0 || chains[1].policy != "drop" {
+		t.Fatalf("unexpected later chain: %#v", chains[1])
+	}
+	if chainAcceptsPort(chains[1], 23456, "tcp") {
+		t.Fatal("chain must not accept unlisted protected port")
+	}
+}
+
+func TestChainAcceptsPortSetAndRange(t *testing.T) {
+	chain := inputBaseChain{
+		priority: 0,
+		policy:   "drop",
+		rules: []string{
+			"tcp dport { 80, 443, 23456 } accept",
+			"udp dport 30000-30010 accept",
+		},
+	}
+	if !chainAcceptsPort(chain, 23456, "tcp") {
+		t.Fatal("expected tcp set to accept 23456")
+	}
+	if !chainAcceptsPort(chain, 30005, "udp") {
+		t.Fatal("expected udp range to accept 30005")
+	}
+	if chainAcceptsPort(chain, 30005, "tcp") {
+		t.Fatal("tcp must not match udp range")
+	}
+}

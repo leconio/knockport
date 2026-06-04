@@ -9,15 +9,22 @@ import (
 	"github.com/leconio/knockport/internal/protocol"
 )
 
+const (
+	maxSequenceStates = 16384
+	maxNonceStates    = 65536
+	cleanupInterval   = time.Second
+)
+
 type sequenceState struct {
 	next     int
 	deadline time.Time
 }
 
 type State struct {
-	mu     sync.Mutex
-	seq    map[string]sequenceState
-	nonces map[string]time.Time
+	mu          sync.Mutex
+	seq         map[string]sequenceState
+	nonces      map[string]time.Time
+	lastCleanup time.Time
 }
 
 func NewState() *State {
@@ -42,7 +49,7 @@ func (s *State) Accept(cfg config.Config, secret []byte, sourceIP string, destPo
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cleanup(now)
+	s.cleanup(now, false)
 
 	current, exists := s.seq[sourceIP]
 	if !exists || now.After(current.deadline) {
@@ -74,6 +81,13 @@ func (s *State) startOrVerifyFinal(cfg config.Config, secret []byte, sourceIP st
 	if len(cfg.KnockPorts) == 1 {
 		return s.verifyFinal(cfg, secret, sourceIP, destPort, payload, now)
 	}
+	if len(s.seq) >= maxSequenceStates {
+		s.cleanup(now, true)
+		if len(s.seq) >= maxSequenceStates {
+			log.Printf("拒绝新敲门序列：状态表已满 source=%s size=%d", sourceIP, len(s.seq))
+			return false
+		}
+	}
 	s.seq[sourceIP] = sequenceState{
 		next:     1,
 		deadline: now.Add(time.Duration(cfg.SeqTimeoutSeconds) * time.Second),
@@ -94,12 +108,23 @@ func (s *State) verifyFinal(cfg config.Config, secret []byte, sourceIP string, d
 		log.Printf("拒绝重放 nonce：source=%s step=%d port=%d", sourceIP, parsed.Step, destPort)
 		return false
 	}
+	if len(s.nonces) >= maxNonceStates {
+		s.cleanup(now, true)
+		if len(s.nonces) >= maxNonceStates {
+			log.Printf("拒绝最终敲门包：nonce 表已满 source=%s size=%d", sourceIP, len(s.nonces))
+			return false
+		}
+	}
 	s.nonces[nonceKey] = now.Add(time.Duration(cfg.HMACWindowSeconds+cfg.SeqTimeoutSeconds) * time.Second)
 	log.Printf("敲门序列完成：source=%s", sourceIP)
 	return true
 }
 
-func (s *State) cleanup(now time.Time) {
+func (s *State) cleanup(now time.Time, force bool) {
+	if !force && !s.lastCleanup.IsZero() && now.Sub(s.lastCleanup) < cleanupInterval {
+		return
+	}
+	s.lastCleanup = now
 	for key, state := range s.seq {
 		if now.After(state.deadline) {
 			delete(s.seq, key)

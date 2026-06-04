@@ -59,24 +59,33 @@ install_runtime_deps() {
   family="$(detect_pkg_family)"
   case "$family" in
     apt)
-      if ! DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl tar nftables iproute2 libpcap0.8 qrencode; then
+      if ! DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl tar nftables iproute2 libpcap0.8; then
         apt-get update
-        DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl tar nftables iproute2 libpcap0.8 qrencode
+        DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl tar nftables iproute2 libpcap0.8
       fi
+      DEBIAN_FRONTEND=noninteractive apt-get install -y qrencode || yellow "Optional dependency qrencode was not installed; QR output will be skipped."
       ;;
     dnf)
-      dnf install -y ca-certificates curl tar nftables iproute libpcap qrencode
+      dnf install -y ca-certificates curl tar nftables iproute libpcap
+      dnf install -y qrencode || yellow "Optional dependency qrencode was not installed; QR output will be skipped."
       ;;
     pacman)
-      pacman -Sy --noconfirm ca-certificates curl tar nftables iproute2 libpcap qrencode
+      pacman -Sy --noconfirm ca-certificates curl tar nftables iproute2 libpcap
+      pacman -S --noconfirm qrencode || yellow "Optional dependency qrencode was not installed; QR output will be skipped."
       ;;
   esac
+}
+
+release_asset() {
+  local arch="$1"
+  printf 'knockgate_linux_%s.tar.gz\n' "${arch}"
 }
 
 release_url() {
   local repo="${KNOCKGATE_REPO:-$DEFAULT_REPO}"
   local arch="$1"
-  local asset="knockgate_linux_${arch}.tar.gz"
+  local asset
+  asset="$(release_asset "$arch")"
 
   if [[ -n "${KNOCKGATE_ASSET_BASE:-}" ]]; then
     printf '%s/%s\n' "${KNOCKGATE_ASSET_BASE%/}" "${asset}"
@@ -90,13 +99,33 @@ release_url() {
   fi
 }
 
+verify_asset() {
+  local file="$1"
+  local checksum_file="$2"
+
+  if [[ "${KNOCKGATE_SKIP_VERIFY:-}" == "1" ]]; then
+    yellow "Skipping checksum verification because KNOCKGATE_SKIP_VERIFY=1."
+    return 0
+  fi
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -c "${checksum_file}"
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 -c "${checksum_file}"
+  else
+    die "missing sha256sum or shasum for checksum verification"
+  fi
+  [[ -s "${file}" ]] || die "downloaded asset is empty: ${file}"
+}
+
 main() {
   require_root
   need_cmd uname
   need_cmd mktemp
 
-  local arch url tmpdir
+  local arch asset url tmpdir
   arch="$(detect_arch)"
+  asset="$(release_asset "$arch")"
   url="$(release_url "$arch")"
   tmpdir="$(mktemp -d)"
   trap 'rm -rf "$tmpdir"' EXIT
@@ -106,8 +135,10 @@ main() {
 
   install_runtime_deps
 
-  curl -fsSL "$url" -o "${tmpdir}/knockgate.tar.gz"
-  tar -xzf "${tmpdir}/knockgate.tar.gz" -C "$tmpdir"
+  curl -fsSL "$url" -o "${tmpdir}/${asset}"
+  curl -fsSL "${url}.sha256" -o "${tmpdir}/${asset}.sha256"
+  (cd "$tmpdir" && verify_asset "${asset}" "${asset}.sha256")
+  tar -xzf "${tmpdir}/${asset}" -C "$tmpdir"
   install -m 0755 "${tmpdir}/knockgate_linux_${arch}/knockgate" "${INSTALL_DIR}/knockgate"
 
   green "Installed:"

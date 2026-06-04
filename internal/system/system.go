@@ -31,7 +31,9 @@ func RequireRoot() error {
 func InstallPackages() error {
 	missing := missingCommands()
 	missing = append(missing, libpcapPackages()...)
+	optional := optionalPackages()
 	if len(missing) == 0 {
+		installOptional(optional)
 		return nil
 	}
 	family, err := packageFamily()
@@ -44,25 +46,30 @@ func InstallPackages() error {
 			if _, updateErr := nft.Run("apt-get", "update"); updateErr != nil {
 				return updateErr
 			}
-			_, err = nft.Run("apt-get", append([]string{"install", "-y"}, missing...)...)
-			return err
+			if _, err = nft.Run("apt-get", append([]string{"install", "-y"}, missing...)...); err != nil {
+				return err
+			}
 		}
 	case "dnf":
-		return installDNF(missing)
+		if err := installDNF(missing); err != nil {
+			return err
+		}
 	case "pacman":
 		_, err = nft.Run("pacman", append([]string{"-Sy", "--noconfirm"}, missing...)...)
-		return err
+		if err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("不支持的包管理器：%s", family)
 	}
+	installOptional(optional)
 	return nil
 }
 
 func missingCommands() []string {
 	need := map[string]string{
-		"nft":      "nftables",
-		"ip":       "iproute2",
-		"qrencode": "qrencode",
+		"nft": "nftables",
+		"ip":  "iproute2",
 	}
 	var missing []string
 	for cmd, pkg := range need {
@@ -71,6 +78,31 @@ func missingCommands() []string {
 		}
 	}
 	return missing
+}
+
+func optionalPackages() []string {
+	if _, err := exec.LookPath("qrencode"); err == nil {
+		return nil
+	}
+	return []string{"qrencode"}
+}
+
+func installOptional(pkgs []string) {
+	if len(pkgs) == 0 {
+		return
+	}
+	family, err := packageFamily()
+	if err != nil {
+		return
+	}
+	switch family {
+	case "apt":
+		_, _ = nft.Run("apt-get", append([]string{"install", "-y"}, pkgs...)...)
+	case "dnf":
+		_ = installDNF(pkgs)
+	case "pacman":
+		_, _ = nft.Run("pacman", append([]string{"-S", "--noconfirm"}, pkgs...)...)
+	}
 }
 
 func libpcapPackages() []string {
@@ -181,6 +213,7 @@ func WriteReadme() error {
 当前安装使用 Go + libpcap 抓包实现 HMAC UDP 顺序敲门。
 
 它只管理 table inet knockgate，不修改 SSH 端口规则，也不重写 /etc/nftables.conf。
+KnockGate 不能绕过其他后续防火墙 drop；原防火墙仍需允许已放行来源访问保护服务。
 `
 	return os.WriteFile(config.ReadmeFile, []byte(data), 0644)
 }

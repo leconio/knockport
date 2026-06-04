@@ -15,7 +15,7 @@ It uses UDP port sequences captured with `libpcap`, validates the final packet w
 - Protected TCP and UDP ports
 - Does not rewrite `/etc/nftables.conf`
 - Does not flush existing firewall rules
-- Works when the protected ports are blocked by the host firewall
+- Adds its own protective drop rules without taking over the rest of the host firewall
 - systemd service management
 - Terminal QR code for client profile import
 - Linux `amd64` and `arm64` release packages
@@ -46,7 +46,7 @@ Server:
 - `nftables`
 - `iproute2`
 - `libpcap`
-- `qrencode` for terminal QR output, optional
+- `qrencode` for terminal QR output, optional; install continues without it
 
 Supported package families:
 
@@ -199,7 +199,9 @@ ip saddr @knock_allow_temp_v4 udp dport 2345 accept
 udp dport 2345 drop
 ```
 
-Knock ports are not accepted by nftables. The service reads UDP packets from the interface through pcap, so KnockGate can still see knock packets even when the host firewall drops the target ports.
+Knock ports are not accepted by nftables. The service reads UDP packets from the interface through pcap, so KnockGate can still see knock packets and update its temporary allowlist even when protected ports are currently dropped.
+
+KnockGate's allow rule is not a bypass for every other host firewall rule. If another nftables base chain, firewalld, ufw, or a provider firewall drops the protected service after KnockGate accepts it, the connection can still fail. Configure the existing firewall to allow traffic that KnockGate has already allowlisted, or use KnockGate as the only rule set protecting that specific service port.
 
 Upstream firewalls are different. Cloud security groups, provider firewalls, or routers must allow the UDP knock packets to reach the server.
 
