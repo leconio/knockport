@@ -10,17 +10,13 @@ It uses UDP port sequences captured with `libpcap`, validates the final packet w
 
 ## Features
 
-- UDP sequence knocking with no listening socket on knock ports
-- Final-step `HMAC-SHA256 + timestamp + nonce` verification
-- Temporary IPv4 allowlist backed by an `nftables` timeout set
-- Repeated successful knocks from the same source refresh the allowlist timeout
-- Protected TCP and UDP ports
-- Does not rewrite `/etc/nftables.conf`
-- Does not flush existing firewall rules
-- Adds its own protective drop rules without taking over the rest of the host firewall
-- systemd service management
-- Terminal QR code for client profile import
-- Linux `amd64` and `arm64` release packages
+- UDP-HMAC port knocking with no listening socket on knock ports
+- Temporary allowlist for protected TCP and UDP ports
+- Automatic allowlist refresh when the client public IP changes
+- Automatic refresh before the server-side open timeout expires
+- Multi-platform clients: CLI, OpenWrt/router service, Android, Windows, Linux, and macOS
+- QR code and import URL for sharing client profiles
+- Works as a firewall overlay without rewriting the existing host firewall
 
 ## Usage
 

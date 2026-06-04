@@ -10,17 +10,13 @@ KnockGate 使用 `libpcap` 抓包，不监听敲门端口；使用 HMAC 校验�
 
 ## 功能
 
-- UDP 顺序端口敲门
-- 最后一步 `HMAC-SHA256 + timestamp + nonce` 校验
-- 基于 `nftables` timeout set 的临时 IPv4 白名单
-- 同一来源 IP 重复敲门成功会刷新白名单时间，不会产生重复条目
-- 支持保护 TCP 和 UDP 端口
-- 不重写 `/etc/nftables.conf`
-- 不清空系统原防火墙规则
-- 只叠加自己的保护端口 drop 规则，不接管系统其他防火墙规则
-- systemd 服务管理
-- 终端二维码导入客户端配置
-- 提供 Linux `amd64` / `arm64` 预编译产物
+- UDP-HMAC 端口敲门，敲门端口不需要服务监听
+- 临时白名单放行受保护的 TCP 和 UDP 端口
+- 客户端公网 IP 变化后自动刷新白名单
+- 白名单到期前自动续期，避免长时间连接场景失效
+- 多端支持：CLI、OpenWrt/路由器常驻服务、Android、Windows、Linux、macOS
+- 支持二维码和导入 URL，一键导入客户端配置
+- 作为现有防火墙的叠加层工作，不重写系统原防火墙
 
 ## 使用方法
 
