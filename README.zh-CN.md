@@ -1,6 +1,6 @@
 # KnockGate
 
-![KnockGate 标志](docs/images/knockgate-logo.jpg)
+![KnockGate dashboard illustration](docs/images/knockgate-hero.jpg)
 
 [English](README.md)
 
