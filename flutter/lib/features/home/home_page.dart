@@ -252,7 +252,7 @@ class _HomePageState extends State<HomePage> {
         const SizedBox(height: 12),
         TextField(
           controller: controller.hostController,
-          decoration: const InputDecoration(labelText: 'Server host or IP'),
+          decoration: _hostDecoration(controller),
         ),
         const SizedBox(height: 12),
         TextField(
@@ -305,7 +305,7 @@ class _HomePageState extends State<HomePage> {
       children: [
         TextField(
           controller: controller.hostController,
-          decoration: const InputDecoration(labelText: 'Server host or IP'),
+          decoration: _hostDecoration(controller),
         ),
         const SizedBox(height: 12),
         TextField(
@@ -351,6 +351,18 @@ class _HomePageState extends State<HomePage> {
       onPressed: controller.busy ? null : (dirty ? onSave : onPressed),
       icon: Icon(dirty ? Icons.save : icon),
       label: Text(dirty ? 'Save' : label),
+    );
+  }
+
+  InputDecoration _hostDecoration(HomeController controller) {
+    final warning = controller.hostWarning;
+    return InputDecoration(
+      labelText: 'Server host or IP',
+      helperText: warning,
+      helperMaxLines: 3,
+      suffixIcon: warning == null
+          ? null
+          : Tooltip(message: warning, child: const Icon(Icons.warning_amber)),
     );
   }
 

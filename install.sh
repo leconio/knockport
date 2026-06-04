@@ -118,6 +118,19 @@ verify_asset() {
   [[ -s "${file}" ]] || die "downloaded asset is empty: ${file}"
 }
 
+download_file() {
+  local url="$1"
+  local output="$2"
+  yellow "Downloading: ${url}"
+  curl --fail --location --show-error \
+    --connect-timeout "${KNOCKGATE_CONNECT_TIMEOUT:-15}" \
+    --max-time "${KNOCKGATE_DOWNLOAD_TIMEOUT:-300}" \
+    --retry "${KNOCKGATE_DOWNLOAD_RETRIES:-3}" \
+    --retry-delay 2 \
+    --retry-connrefused \
+    "$url" -o "$output"
+}
+
 main() {
   require_root
   need_cmd uname
@@ -128,15 +141,15 @@ main() {
   asset="$(release_asset "$arch")"
   url="$(release_url "$arch")"
   tmpdir="$(mktemp -d)"
-  trap 'rm -rf "$tmpdir"' EXIT
+  trap 'rm -rf '"$(printf '%q' "$tmpdir")" EXIT
 
   blue "${PROJECT_NAME} installer"
   yellow "Binary asset: ${url}"
 
   install_runtime_deps
 
-  curl -fsSL "$url" -o "${tmpdir}/${asset}"
-  curl -fsSL "${url}.sha256" -o "${tmpdir}/${asset}.sha256"
+  download_file "$url" "${tmpdir}/${asset}"
+  download_file "${url}.sha256" "${tmpdir}/${asset}.sha256"
   (cd "$tmpdir" && verify_asset "${asset}" "${asset}.sha256")
   tar -xzf "${tmpdir}/${asset}" -C "$tmpdir"
   install -m 0755 "${tmpdir}/knockgate_linux_${arch}/knockgate" "${INSTALL_DIR}/knockgate"

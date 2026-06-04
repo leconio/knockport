@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../models/knock_profile.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/knock_service.dart';
+import '../../services/network_warning_service.dart';
 import '../../services/profile_store.dart';
 import '../../utils/crypto_codec.dart';
 import '../../utils/ports.dart';
@@ -12,15 +15,19 @@ class HomeController extends ChangeNotifier {
     required this.store,
     required this.knockService,
     required this.connectivityService,
-  }) {
+    NetworkWarningService? networkWarningService,
+  }) : networkWarningService =
+           networkWarningService ?? NetworkWarningService() {
     for (final controller in profileControllers) {
       controller.addListener(_markFormDirty);
     }
+    hostController.addListener(_scheduleHostWarningRefresh);
   }
 
   final ProfileStore store;
   final KnockService knockService;
   final ConnectivityService connectivityService;
+  final NetworkWarningService networkWarningService;
 
   final labelController = TextEditingController();
   final hostController = TextEditingController();
@@ -36,11 +43,14 @@ class HomeController extends ChangeNotifier {
   bool knockDirty = false;
   bool checkDirty = false;
   String? lastError;
+  String? hostWarning;
   int errorVersion = 0;
   List<String> checkResults = const <String>[];
   List<String> knockLogs = const <String>[];
 
   bool _syncingProfile = false;
+  Timer? _hostWarningTimer;
+  int _hostWarningGeneration = 0;
 
   List<TextEditingController> get profileControllers => [
     labelController,
@@ -86,6 +96,7 @@ class HomeController extends ChangeNotifier {
     _syncingProfile = false;
     knockDirty = false;
     checkDirty = false;
+    unawaited(refreshHostWarning());
     if (notify) {
       notifyListeners();
     }
@@ -263,6 +274,62 @@ class HomeController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _scheduleHostWarningRefresh() {
+    if (_syncingProfile) {
+      return;
+    }
+    _hostWarningTimer?.cancel();
+    _hostWarningTimer = Timer(
+      const Duration(milliseconds: 350),
+      () => unawaited(refreshHostWarning()),
+    );
+  }
+
+  Future<void> refreshHostWarning() async {
+    final generation = ++_hostWarningGeneration;
+    final host = hostController.text.trim();
+    if (host.isEmpty) {
+      _setHostWarning(null, generation);
+      return;
+    }
+    final warnings = await networkWarningService.warningsForHost(host);
+    if (generation != _hostWarningGeneration) {
+      return;
+    }
+    _setHostWarning(_summarizeHostWarnings(warnings), generation);
+  }
+
+  void _setHostWarning(String? warning, int generation) {
+    if (generation != _hostWarningGeneration || hostWarning == warning) {
+      return;
+    }
+    hostWarning = warning;
+    notifyListeners();
+  }
+
+  String? _summarizeHostWarnings(List<String> warnings) {
+    if (warnings.isEmpty) {
+      return null;
+    }
+    final hasAddressWarning = warnings.any(
+      (warning) =>
+          warning.contains('private') ||
+          warning.contains('CGNAT') ||
+          warning.contains('fake-IP') ||
+          warning.contains('reserved'),
+    );
+    final hasTunWarning = warnings.any(
+      (warning) => warning.contains('TUN') || warning.contains('VPN'),
+    );
+    if (hasAddressWarning && hasTunWarning) {
+      return 'Private/fake-IP address and TUN/VPN detected; use the real public host or bypass proxy if results look wrong.';
+    }
+    if (hasAddressWarning) {
+      return 'Private/fake-IP/reserved address detected; replace with public IP/domain for external clients.';
+    }
+    return 'TUN/VPN network detected; knock/check may use a proxy path.';
+  }
+
   bool _updateDirtyFlags() {
     final nextKnockDirty = _knockControllers.any(_controllerChanged);
     final nextCheckDirty = _checkControllers.any(_controllerChanged);
@@ -308,6 +375,7 @@ class HomeController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _hostWarningTimer?.cancel();
     for (final controller in profileControllers) {
       controller.dispose();
     }

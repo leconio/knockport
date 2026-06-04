@@ -1,5 +1,7 @@
 # KnockGate
 
+![KnockGate logo](docs/images/knockgate-logo.jpg)
+
 [简体中文](README.zh-CN.md)
 
 KnockGate is a Linux port-knocking service for temporarily opening protected ports to a verified IPv4 source address.
@@ -62,6 +64,15 @@ Install on the server:
 curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh | sudo bash
 sudo knockgate install
 ```
+
+If the server needs an HTTP/SOCKS proxy to reach package mirrors or GitHub, preserve proxy environment variables when entering `sudo`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh \
+  | sudo --preserve-env=HTTP_PROXY,HTTPS_PROXY,ALL_PROXY,NO_PROXY,http_proxy,https_proxy,all_proxy,no_proxy bash
+```
+
+`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY` are used by tools such as `curl`. Package managers may also need their own proxy configuration depending on the distribution.
 
 During setup, enter:
 
@@ -134,16 +145,20 @@ Common commands:
 sudo knockgate install       # install or repair
 sudo knockgate reset         # reset protected ports, knock ports, secret, and timings
 sudo knockgate update        # apply the currently saved settings
+sudo knockgate upgrade       # download latest GitHub Release server and restart service
+sudo knockgate upgrade v0.1.9 # download a specific server version and restart service
 sudo knockgate status        # show service, rules, allowlist, and config
 sudo knockgate logs          # show recent logs
 sudo knockgate logs-follow   # follow logs
 sudo knockgate qr            # print client import URL / QR code
 sudo knockgate allow IP      # manually allow one IPv4 temporarily
 sudo knockgate flush         # flush temporary allowlist
-sudo knockgate reload        # rebuild KnockGate's own nft table; flushes temporary allowlist
+sudo knockgate reload        # rebuild KnockGate's own nft rules; keep temporary allowlist
 sudo knockgate clear         # delete table inet knockgate
 sudo knockgate uninstall     # uninstall
 ```
+
+`update` does not download a new version. It only applies the current `/etc/knockgate/knockgate.conf` and restarts the service. Use `upgrade` to update the server binary.
 
 ## Configuration Management
 
@@ -205,6 +220,14 @@ KnockGate's allow rule is not a bypass for every other host firewall rule. If an
 
 Upstream firewalls are different. Cloud security groups, provider firewalls, or routers must allow the UDP knock packets to reach the server.
 
+## Proxy, TUN, And Fake-IP Notes
+
+The server only needs outbound network access during package installation and binary upgrades, for example when `install.sh` installs dependencies or `knockgate upgrade` downloads a release asset from GitHub. Normal knocking does not require the server to make outbound connections.
+
+The generated import URL uses the server address detected locally. On cloud hosts this can be a private address such as `10.x`, `172.16-31.x`, or `192.168.x`. KnockGate will print a warning in that case. If clients are outside that private network, replace the `host=` value in the import URL with the public IP or domain before importing it.
+
+The shell and Flutter clients warn when the host resolves to a private, CGNAT, reserved, or fake-IP range such as `198.18.0.0/15`, or when a TUN/VPN-like interface is detected. This does not stop knocking. It means the TCP check result may be misleading if knock packets and TCP checks leave through a proxy, VPN, or fake-IP DNS path instead of the same public route.
+
 ## Client Usage
 
 Create an import URL on the server:
@@ -232,9 +255,10 @@ clients/shell/knockgate-knock.sh check SERVER_IP 5432/tcp 5432/udp
 TCP results:
 
 ```text
-OPEN      TCP handshake succeeded
-REFUSED   host was reachable, but no service is listening
-FILTERED  connection timed out
+OPEN      port open: TCP handshake succeeded
+REFUSED   port open: firewall/path reached the host, but no service is listening
+FILTERED  port not open: timed out or dropped by firewall/network
+FAILED    unknown state: local tool or network command failed
 ```
 
 UDP checks send a probe only. UDP has no handshake, so a generic client cannot reliably prove that a UDP port is open.

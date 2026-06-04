@@ -25,6 +25,8 @@ import (
 	"github.com/leconio/knockport/internal/ui"
 )
 
+var Version = "dev"
+
 func Run(args []string) error {
 	if len(args) == 0 {
 		if os.Geteuid() == 0 {
@@ -46,6 +48,12 @@ func Run(args []string) error {
 		return Install()
 	case "update":
 		return Update()
+	case "upgrade":
+		version := ""
+		if len(args) > 1 {
+			version = args[1]
+		}
+		return Upgrade(version)
 	case "reset":
 		return Reset()
 	case "status":
@@ -86,7 +94,8 @@ func Usage() {
   knockgate                 root 下打开交互菜单
   knockgate install         安装 / 修复
   knockgate reset           重置保护端口、敲门序列、密钥和时间
-  knockgate update          按当前配置重写规则并重启服务
+  knockgate update          应用当前配置并重启服务
+  knockgate upgrade [版本]   拉取 GitHub Release 服务端并重启服务
   knockgate serve           systemd 使用的 pcap 抓包服务模式
   knockgate status          查看服务、规则、白名单和配置
   knockgate logs            查看最近日志
@@ -102,7 +111,8 @@ Usage:
   knockgate                 Open interactive menu as root
   knockgate install         Install / repair
   knockgate reset           Reset protected ports, knock sequence, secret, and timings
-  knockgate update          Rewrite rules and restart service from current config
+  knockgate update          Apply current config and restart service
+  knockgate upgrade [tag]   Download GitHub Release server binary and restart service
   knockgate serve           pcap capture service mode for systemd
   knockgate status          Show service, rules, allowlist, and config
   knockgate logs            Show recent logs
@@ -178,8 +188,43 @@ func Update() error {
 	if err := ensureFirewallCanTakeover(cfg); err != nil {
 		return err
 	}
-	if err := nft.WriteConfig(cfg); err != nil {
+	fmt.Println(ui.Cyan(ui.T("正在应用 KnockGate nft 规则...", "Applying KnockGate nft rules...")))
+	if err := nft.Apply(cfg); err != nil {
 		return err
+	}
+	fmt.Println(ui.Green(ui.T("KnockGate nft 规则已应用。", "KnockGate nft rules applied.")))
+	if err := system.WriteService(); err != nil {
+		return err
+	}
+	if err := system.Systemctl("daemon-reload"); err != nil {
+		return err
+	}
+	fmt.Println(ui.Cyan(ui.T("正在重启 knockgate.service...", "Restarting knockgate.service...")))
+	if err := system.Systemctl("restart", "knockgate.service"); err != nil {
+		return err
+	}
+	fmt.Println(ui.Green(ui.T("更新完成。", "Update completed.")))
+	return nil
+}
+
+func Upgrade(version string) error {
+	if err := system.RequireRoot(); err != nil {
+		return err
+	}
+	label := ui.T("latest", "latest")
+	if version != "" {
+		label = version
+	}
+	if !ui.Confirm(ui.T("从 GitHub Release 拉取服务端版本 "+label+" 并替换 /usr/local/bin/knockgate？", "Download server version "+label+" from GitHub Release and replace /usr/local/bin/knockgate?"), false) {
+		return errors.New(ui.T("已取消", "cancelled"))
+	}
+	fmt.Println(ui.Cyan(ui.T("正在下载并校验服务端二进制...", "Downloading and verifying server binary...")))
+	backup, err := system.UpgradeServer(version)
+	if err != nil {
+		return err
+	}
+	if backup != "" {
+		fmt.Printf("%s: %s\n", ui.T("旧版本备份", "Previous binary backup"), backup)
 	}
 	if err := system.WriteService(); err != nil {
 		return err
@@ -187,7 +232,12 @@ func Update() error {
 	if err := system.Systemctl("daemon-reload"); err != nil {
 		return err
 	}
-	return system.Systemctl("restart", "knockgate.service")
+	fmt.Println(ui.Cyan(ui.T("正在重启 knockgate.service...", "Restarting knockgate.service...")))
+	if err := system.Systemctl("restart", "knockgate.service"); err != nil {
+		return err
+	}
+	fmt.Println(ui.Green(ui.T("服务端升级完成。", "Server upgrade completed.")))
+	return nil
 }
 
 func Reset() error {
@@ -327,9 +377,9 @@ func Menu() error {
 	ui.ChooseLanguage()
 	for {
 		fmt.Println()
-		fmt.Println(ui.Cyan("KnockGate Manager"))
+		fmt.Println(ui.Cyan(fmt.Sprintf("KnockGate Manager %s", Version)))
 		fmt.Println(ui.T("1. 安装 / 修复", "1. Install / Repair"))
-		fmt.Println(ui.T("2. 更新配置", "2. Update config"))
+		fmt.Println(ui.T("2. 应用当前配置", "2. Apply current config"))
 		fmt.Println(ui.T("3. 重置保护端口、敲门序列、密钥和时间", "3. Reset protected ports, knock sequence, secret, and timings"))
 		fmt.Println(ui.T("4. 查看状态", "4. Show status"))
 		fmt.Println(ui.T("5. 查看日志", "5. Show logs"))
@@ -339,8 +389,9 @@ func Menu() error {
 		fmt.Println(ui.T("9. 重新加载 KnockGate 规则（保留临时白名单）", "9. Reload KnockGate rules (keep temporary allowlist)"))
 		fmt.Println(ui.T("10. 清空 KnockGate 防火墙表", "10. Clear KnockGate firewall table"))
 		fmt.Println(ui.T("11. 生成客户端导入二维码", "11. Generate client import QR"))
-		fmt.Println(ui.T("12. 卸载", "12. Uninstall"))
-		fmt.Println(ui.T("13. 退出", "13. Exit"))
+		fmt.Println(ui.T("12. 升级服务端", "12. Upgrade server"))
+		fmt.Println(ui.T("13. 卸载", "13. Uninstall"))
+		fmt.Println(ui.T("14. 退出", "14. Exit"))
 		switch ui.Prompt(ui.T("请选择", "Select"), "") {
 		case "1":
 			_ = Install()
@@ -367,8 +418,10 @@ func Menu() error {
 		case "11":
 			_ = ImportURL()
 		case "12":
+			_ = Upgrade("")
+		case "13":
 			_ = Uninstall()
-		case "13", "q", "quit", "exit":
+		case "14", "q", "quit", "exit":
 			return nil
 		default:
 			fmt.Println(ui.Yellow(ui.T("未知选择。", "Unknown selection.")))
@@ -444,6 +497,12 @@ func ImportURL() error {
 		return err
 	}
 	host := detectHost()
+	if isLikelyNonPublicHost(host) {
+		fmt.Println(ui.Yellow(ui.T(
+			"警告：自动检测到的 host 是内网/保留地址。二维码仍会生成；如果客户端不在同一内网，请在导入前把 URL 里的 host 手动替换成公网 IP 或域名。",
+			"WARNING: the detected host is private/reserved. The QR URL is still generated; if clients are outside this private network, replace host in the URL with a public IP or domain before importing.",
+		)))
+	}
 	values := url.Values{}
 	values.Set("scheme", "udp-hmac")
 	values.Set("host", host)
@@ -565,6 +624,23 @@ func detectHost() string {
 		}
 	}
 	return "SERVER_IP"
+}
+
+func isLikelyNonPublicHost(host string) bool {
+	host = strings.Trim(host, "[]")
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	if addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() || addr.IsUnspecified() {
+		return true
+	}
+	if !addr.Is4() {
+		return false
+	}
+	octets := addr.As4()
+	return (octets[0] == 100 && octets[1] >= 64 && octets[1] <= 127) ||
+		(octets[0] == 198 && (octets[1] == 18 || octets[1] == 19))
 }
 
 func valueString(value, fallback string) string {

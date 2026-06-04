@@ -1,13 +1,20 @@
 package system
 
 import (
+	"archive/tar"
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 
 	"github.com/leconio/knockport/internal/config"
 	"github.com/leconio/knockport/internal/nft"
@@ -18,6 +25,7 @@ const (
 	ServiceFile      = "/etc/systemd/system/knockgate.service"
 	LegacyNFTService = "/etc/systemd/system/knockgate-nft.service"
 	LegacyKnockdDrop = "/etc/systemd/system/knockd.service.d/override.conf"
+	DefaultRepo      = "leconio/knockport"
 )
 
 func RequireRoot() error {
@@ -174,6 +182,179 @@ func InstallSelf() error {
 	defer out.Close()
 	_, err = io.Copy(out, in)
 	return err
+}
+
+func UpgradeServer(version string) (string, error) {
+	arch, err := releaseArch()
+	if err != nil {
+		return "", err
+	}
+	asset := fmt.Sprintf("knockgate_linux_%s.tar.gz", arch)
+	url := releaseURL(version, asset)
+	tmpDir, err := os.MkdirTemp("", "knockgate-upgrade-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmpDir)
+	assetPath := filepath.Join(tmpDir, asset)
+	sumPath := assetPath + ".sha256"
+	if err := downloadFile(assetPath, url); err != nil {
+		return "", err
+	}
+	if err := downloadFile(sumPath, url+".sha256"); err != nil {
+		return "", err
+	}
+	if err := verifySHA256(assetPath, sumPath); err != nil {
+		return "", err
+	}
+	extracted, err := extractKnockgate(assetPath, tmpDir)
+	if err != nil {
+		return "", err
+	}
+	backup := fmt.Sprintf("%s.bak.%s", InstallPath, time.Now().Format("20060102-150405"))
+	if _, err := os.Stat(InstallPath); err == nil {
+		if err := copyFile(InstallPath, backup, 0755); err != nil {
+			return "", err
+		}
+	}
+	next := InstallPath + ".new"
+	_ = os.Remove(next)
+	if err := copyFile(extracted, next, 0755); err != nil {
+		return "", err
+	}
+	if err := os.Rename(next, InstallPath); err != nil {
+		_ = os.Remove(next)
+		return "", err
+	}
+	return backup, nil
+}
+
+func releaseArch() (string, error) {
+	switch runtime.GOARCH {
+	case "amd64", "arm64":
+		return runtime.GOARCH, nil
+	default:
+		return "", fmt.Errorf("不支持的架构：%s", runtime.GOARCH)
+	}
+}
+
+func releaseURL(version, asset string) string {
+	if base := strings.TrimRight(os.Getenv("KNOCKGATE_ASSET_BASE"), "/"); base != "" {
+		return base + "/" + asset
+	}
+	repo := os.Getenv("KNOCKGATE_REPO")
+	if repo == "" {
+		repo = DefaultRepo
+	}
+	if version == "" {
+		version = os.Getenv("KNOCKGATE_VERSION")
+	}
+	if version != "" {
+		return fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", repo, version, asset)
+	}
+	return fmt.Sprintf("https://github.com/%s/releases/latest/download/%s", repo, asset)
+}
+
+func downloadFile(path, url string) error {
+	client := http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("下载失败 %s: HTTP %s", url, resp.Status)
+	}
+	out, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, resp.Body)
+	return err
+}
+
+func verifySHA256(assetPath, sumPath string) error {
+	data, err := os.ReadFile(sumPath)
+	if err != nil {
+		return err
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return errors.New("sha256 文件为空")
+	}
+	want := strings.ToLower(fields[0])
+	in, err := os.Open(assetPath)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, in); err != nil {
+		return err
+	}
+	got := hex.EncodeToString(hash.Sum(nil))
+	if got != want {
+		return fmt.Errorf("sha256 校验失败：got %s want %s", got, want)
+	}
+	return nil
+}
+
+func extractKnockgate(assetPath, tmpDir string) (string, error) {
+	in, err := os.Open(assetPath)
+	if err != nil {
+		return "", err
+	}
+	defer in.Close()
+	gz, err := gzip.NewReader(in)
+	if err != nil {
+		return "", err
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	for {
+		header, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+		if header.Typeflag != tar.TypeReg || filepath.Base(header.Name) != "knockgate" {
+			continue
+		}
+		outPath := filepath.Join(tmpDir, "knockgate.new")
+		out, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0755)
+		if err != nil {
+			return "", err
+		}
+		if _, err := io.Copy(out, tr); err != nil {
+			_ = out.Close()
+			return "", err
+		}
+		if err := out.Close(); err != nil {
+			return "", err
+		}
+		return outPath, nil
+	}
+	return "", errors.New("release 包中未找到 knockgate 二进制")
+}
+
+func copyFile(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 func WriteService() error {

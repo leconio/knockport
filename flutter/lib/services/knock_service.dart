@@ -6,14 +6,27 @@ import 'package:crypto/crypto.dart';
 
 import '../models/knock_profile.dart';
 import '../utils/crypto_codec.dart';
+import 'network_warning_service.dart';
 
 typedef KnockLogSink = void Function(String message);
 
 class KnockService {
+  KnockService({NetworkWarningService? networkWarningService})
+    : _networkWarningService = networkWarningService ?? NetworkWarningService();
+
+  final NetworkWarningService _networkWarningService;
+
   Future<void> knock(KnockProfile profile, {KnockLogSink? onLog}) async {
     onLog?.call('Resolving ${profile.host}');
     final address = await _resolveHost(profile.host);
     onLog?.call('Resolved ${profile.host} -> ${address.address}');
+    final warnings = await _networkWarningService.warningsForHost(
+      profile.host,
+      resolvedAddress: address,
+    );
+    for (final warning in warnings) {
+      onLog?.call(warning);
+    }
     onLog?.call('Opening UDP socket');
     final socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
     try {

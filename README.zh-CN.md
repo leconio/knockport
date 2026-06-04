@@ -1,5 +1,7 @@
 # KnockGate
 
+![KnockGate 标志](docs/images/knockgate-logo.jpg)
+
 [English](README.md)
 
 KnockGate 是一个 Linux 端口敲门服务。客户端按 UDP 端口顺序发送敲门包后，服务端会把通过校验的来源 IPv4 临时加入 `nftables` 白名单，从而放行指定的保护端口。
@@ -60,6 +62,15 @@ KnockGate 使用 `libpcap` 抓包，不监听敲门端口；使用 HMAC 校验�
 curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh | sudo bash
 sudo knockgate install
 ```
+
+如果服务器访问软件源或 GitHub 需要 HTTP/SOCKS 代理，进入 `sudo` 时需要保留代理环境变量：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/leconio/knockport/main/install.sh \
+  | sudo --preserve-env=HTTP_PROXY,HTTPS_PROXY,ALL_PROXY,NO_PROXY,http_proxy,https_proxy,all_proxy,no_proxy bash
+```
+
+`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 会被 `curl` 等工具使用。不同发行版的软件包管理器可能还需要单独配置代理。
 
 按提示设置：
 
@@ -132,16 +143,20 @@ sudo knockgate
 sudo knockgate install       # 首次安装或修复
 sudo knockgate reset         # 重置保护端口、敲门端口、密钥和时间
 sudo knockgate update        # 应用当前保存的设置
+sudo knockgate upgrade       # 拉取最新 GitHub Release 服务端并重启服务
+sudo knockgate upgrade v0.1.9 # 拉取指定版本服务端并重启服务
 sudo knockgate status        # 查看服务状态、规则、白名单和配置
 sudo knockgate logs          # 查看最近日志
 sudo knockgate logs-follow   # 跟随日志
 sudo knockgate qr            # 输出客户端导入 URL / 二维码
 sudo knockgate allow IP      # 手动临时放行一个 IPv4
 sudo knockgate flush         # 清空临时白名单
-sudo knockgate reload        # 重建 KnockGate 自己的 nft 表，会清空临时白名单
+sudo knockgate reload        # 重建 KnockGate 自己的 nft 规则，保留临时白名单
 sudo knockgate clear         # 删除 table inet knockgate
 sudo knockgate uninstall     # 卸载
 ```
+
+`update` 不下载新版本，它只应用当前 `/etc/knockgate/knockgate.conf` 并重启服务。升级服务端二进制请使用 `upgrade`。
 
 ## 配置管理
 
@@ -203,6 +218,14 @@ KnockGate 的 allow 规则不是对所有主机防火墙规则的旁路。如果
 
 上游防火墙不一样。云厂商安全组、机房防火墙或路由器必须允许 UDP 敲门包到达服务器。
 
+## 代理、TUN 和 fake-IP 说明
+
+服务端只有在安装依赖和升级二进制时需要访问公网，例如 `install.sh` 安装依赖，或 `knockgate upgrade` 从 GitHub Release 下载产物。正常敲门过程中，服务端不需要主动访问公网。
+
+导入 URL 里的 `host` 默认来自服务端本机自动检测。云服务器上这个值可能是 `10.x`、`172.16-31.x`、`192.168.x` 这类内网地址。KnockGate 会在这种情况下打印提示。如果客户端不在同一个内网，请在导入前把 URL 里的 `host=` 手动替换成公网 IP 或域名。
+
+Shell 客户端和 Flutter 客户端检测到内网、CGNAT、保留地址、fake-IP 地址段，例如 `198.18.0.0/15`，或检测到 TUN/VPN 类网卡时，会给出提示。这不会阻止敲门，只表示 TCP 检测结果可能受代理、VPN 或 fake-IP DNS 影响。敲门包和检测连接最好走同一条真实公网路径。
+
 ## 客户端用法
 
 在服务端生成导入 URL 和二维码：
@@ -230,9 +253,10 @@ clients/shell/knockgate-knock.sh check SERVER_IP 5432/tcp 5432/udp
 TCP 检查结果：
 
 ```text
-OPEN      TCP 握手成功
-REFUSED   主机可达，但端口没有服务监听
-FILTERED  连接超时
+OPEN      端口已开：TCP 握手成功
+REFUSED   端口已开：防火墙/网络路径已到主机，但服务未监听
+FILTERED  端口未开：超时，通常是防火墙或网络丢弃
+FAILED    未知状态：本地工具或网络命令失败
 ```
 
 UDP 没有通用可靠握手。客户端对 UDP 只能发送探测包，不能证明 UDP 端口已开放。

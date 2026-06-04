@@ -33,11 +33,16 @@ Examples:
   $(basename "$0") check SERVER_IP 5432/tcp 5432/udp
 
 Check results:
-  OPEN      TCP handshake succeeded.
-  REFUSED   TCP path reached host, but no service is listening.
-  FILTERED  TCP timed out; usually firewall/network drop.
-  UDP-SENT  UDP has no reliable handshake; packet was sent, not proven open.
-  FAILED    Local tool or network command failed.
+  OPEN      端口已开: TCP handshake succeeded.
+  REFUSED   端口已开: TCP path reached host, but no service is listening.
+  FILTERED  端口未开: TCP timed out; usually firewall/network drop.
+  UDP-SENT  未知状态: UDP packet was sent, not proven open.
+  FAILED    未知状态: Local tool or network command failed.
+
+Warnings:
+  Private/CGNAT/fake-IP resolved addresses and TUN/VPN interfaces can make
+  connectivity checks misleading. Use the real public IP/domain or bypass the
+  proxy/VPN for this server when in doubt.
 EOF
 }
 
@@ -151,6 +156,90 @@ parse_target() {
     esac
 }
 
+resolve_ipv4() {
+    local host="$1"
+    if [[ "${host}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        printf '%s\n' "${host}"
+        return 0
+    fi
+    if command -v getent >/dev/null 2>&1; then
+        getent ahostsv4 "${host}" 2>/dev/null | awk 'NR == 1 {print $1; exit}' && return 0
+    fi
+    if command -v dig >/dev/null 2>&1; then
+        dig +short A "${host}" 2>/dev/null | awk 'NR == 1 {print; exit}' && return 0
+    fi
+    if command -v nslookup >/dev/null 2>&1; then
+        nslookup "${host}" 2>/dev/null | awk '/^Address: / {print $2}' | awk 'NR == 1 {print; exit}' && return 0
+    fi
+    return 1
+}
+
+is_suspicious_ipv4() {
+    local ip="$1" a b c d
+    IFS=. read -r a b c d <<< "${ip}"
+    [[ "${a}${b}${c}${d}" =~ ^[0-9]+$ ]] || return 1
+    (( a == 10 )) && return 0
+    (( a == 127 )) && return 0
+    (( a == 169 && b == 254 )) && return 0
+    (( a == 172 && b >= 16 && b <= 31 )) && return 0
+    (( a == 192 && b == 168 )) && return 0
+    (( a == 100 && b >= 64 && b <= 127 )) && return 0
+    (( a == 198 && (b == 18 || b == 19) )) && return 0
+    return 1
+}
+
+route_interface() {
+    local target="$1"
+    if command -v ip >/dev/null 2>&1; then
+        ip route get "${target}" 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}'
+        return 0
+    fi
+    if command -v route >/dev/null 2>&1; then
+        route -n get "${target}" 2>/dev/null | awk '/interface: / {print $2; exit}'
+        return 0
+    fi
+}
+
+vpn_interfaces() {
+    local names=""
+    if command -v ip >/dev/null 2>&1; then
+        names="$(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | cut -d@ -f1 | grep -E '^(tun|tap|utun|wg|tailscale|zt|clash|mihomo|sing|vpn)' || true)"
+    elif command -v ifconfig >/dev/null 2>&1; then
+        if ifconfig -l >/dev/null 2>&1; then
+            names="$(ifconfig -l 2>/dev/null | tr ' ' '\n' | grep -E '^(tun|tap|utun|wg|tailscale|zt|clash|mihomo|sing|vpn)' || true)"
+        else
+            names="$(ifconfig -a 2>/dev/null | awk -F: '/^[A-Za-z0-9_.-]+:/ {print $1}' | grep -E '^(tun|tap|utun|wg|tailscale|zt|clash|mihomo|sing|vpn)' || true)"
+        fi
+    fi
+    printf '%s\n' "${names}" | awk 'NF' | sort -u | paste -sd ','
+}
+
+warn_network_path() {
+    local server="$1" ip="" iface="" vpn_ifaces=""
+    ip="$(resolve_ipv4 "${server}" || true)"
+    if [[ -n "${ip}" ]] && is_suspicious_ipv4 "${ip}"; then
+        echo "WARN: ${server} resolved to ${ip}, which is private/CGNAT/fake-IP/reserved."
+        echo "      If this is not the real server address, knock/check may use the wrong network path."
+    fi
+
+    if [[ -n "${ip}" ]]; then
+        iface="$(route_interface "${ip}" || true)"
+    else
+        iface="$(route_interface "${server}" || true)"
+    fi
+    if [[ "${iface}" =~ ^(tun|tap|utun|wg|tailscale|zt|clash|mihomo|sing|vpn) ]]; then
+        echo "WARN: route to ${server} uses ${iface}. TUN/VPN/proxy routing can make check results misleading."
+        echo "      UDP knock and TCP check must leave through the same public network path."
+        return 0
+    fi
+
+    vpn_ifaces="$(vpn_interfaces || true)"
+    if [[ -n "${vpn_ifaces}" ]]; then
+        echo "WARN: detected TUN/VPN-like interface(s): ${vpn_ifaces}."
+        echo "      If traffic to ${server} is routed through them or fake-IP DNS, check results may be unreliable."
+    fi
+}
+
 run_nc_with_timeout() {
     local server="$1"
     local port="$2"
@@ -199,13 +288,13 @@ try_tcp() {
     fi
 
     if [[ "${rc}" -eq 0 ]]; then
-        echo "OPEN ${server}:${port}/tcp"
+        echo "OPEN ${server}:${port}/tcp 端口已开（TCP 握手成功）"
     elif printf '%s\n' "${output}" | grep -qi "refused"; then
-        echo "REFUSED ${server}:${port}/tcp"
+        echo "REFUSED ${server}:${port}/tcp 端口已开（防火墙已放行，服务未监听）"
     elif [[ "${rc}" -eq 124 ]] || printf '%s\n' "${output}" | grep -Eqi "timed out|timeout|Operation now in progress"; then
-        echo "FILTERED ${server}:${port}/tcp"
+        echo "FILTERED ${server}:${port}/tcp 端口未开（超时或被防火墙/网络丢弃）"
     else
-        echo "FAILED ${server}:${port}/tcp"
+        echo "FAILED ${server}:${port}/tcp 未知状态（本地工具或网络命令失败）"
         if [[ "${VERBOSE}" -eq 0 ]]; then
             printf '%s\n' "${output}" >&2
         fi
@@ -217,15 +306,15 @@ try_udp() {
     local port="$2"
     if command -v nc >/dev/null 2>&1; then
         printf 'knockgate-probe\n' | nc -u -w "${CHECK_TIMEOUT}" "${server}" "${port}" >/dev/null 2>&1 || true
-        echo "UDP-SENT ${server}:${port}/udp"
+        echo "UDP-SENT ${server}:${port}/udp 未知状态（UDP 无通用可靠握手）"
         return 0
     fi
     if command -v bash >/dev/null 2>&1; then
         SERVER="${server}" PORT="${port}" bash -c 'printf "knockgate-probe\n" >"/dev/udp/$SERVER/$PORT"' 2>/dev/null || true
-        echo "UDP-SENT ${server}:${port}/udp"
+        echo "UDP-SENT ${server}:${port}/udp 未知状态（UDP 无通用可靠握手）"
         return 0
     fi
-    echo "FAILED ${server}:${port}/udp"
+    echo "FAILED ${server}:${port}/udp 未知状态（缺少 UDP 探测工具）"
     echo "Missing nc and bash /dev/udp support." >&2
 }
 
@@ -300,6 +389,7 @@ send_knock() {
         fi
     done
 
+    warn_network_path "${server}"
     secret_hex="$(b64url_to_hex "${secret}")"
 
     echo "UDP HMAC knocking ${server}: ${ports[*]} (delay ${KNOCK_DELAY}s)"
@@ -368,6 +458,7 @@ run_check_command() {
     local server="$1"
     shift
     validate_check_timeout
+    warn_network_path "${server}"
     for target in "$@"; do
         check_one "${server}" "${target}"
     done

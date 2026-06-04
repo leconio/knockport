@@ -1,9 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:knockgate_client/features/home/home_controller.dart';
 import 'package:knockgate_client/services/connectivity_service.dart';
 import 'package:knockgate_client/services/knock_service.dart';
+import 'package:knockgate_client/services/network_warning_service.dart';
 import 'package:knockgate_client/services/profile_store.dart';
 
 void main() {
@@ -19,11 +22,12 @@ void main() {
       '&secret=MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI'
       '&label=Imported';
 
-  HomeController buildController() {
+  HomeController buildController({NetworkWarningService? warningService}) {
     return HomeController(
       store: ProfileStore(),
       knockService: KnockService(),
       connectivityService: ConnectivityService(),
+      networkWarningService: warningService ?? _NoopNetworkWarningService(),
     );
   }
 
@@ -64,4 +68,44 @@ void main() {
     expect(controller.knockLogs.first, contains('second'));
     expect(controller.knockLogs.last, contains('first'));
   });
+
+  test('host warning is exposed for the host field', () async {
+    SharedPreferences.setMockInitialValues({});
+    final controller = buildController(
+      warningService: _FixedNetworkWarningService([
+        'Warning: example.com resolved to 198.18.0.1, a private/CGNAT/fake-IP/reserved address.',
+      ]),
+    );
+    addTearDown(controller.dispose);
+
+    await controller.init();
+    controller.hostController.text = 'example.com';
+    await controller.refreshHostWarning();
+
+    expect(controller.hostWarning, contains('Private/fake-IP'));
+  });
+}
+
+class _NoopNetworkWarningService extends NetworkWarningService {
+  @override
+  Future<List<String>> warningsForHost(
+    String host, {
+    InternetAddress? resolvedAddress,
+  }) async {
+    return const <String>[];
+  }
+}
+
+class _FixedNetworkWarningService extends NetworkWarningService {
+  _FixedNetworkWarningService(this.warnings);
+
+  final List<String> warnings;
+
+  @override
+  Future<List<String>> warningsForHost(
+    String host, {
+    InternetAddress? resolvedAddress,
+  }) async {
+    return warnings;
+  }
 }
