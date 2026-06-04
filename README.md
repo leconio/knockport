@@ -10,7 +10,7 @@ It uses UDP port sequences captured with `libpcap`, validates the final packet w
 
 ## Features
 
-- UDP-HMAC port knocking with no listening socket on knock ports
+- UDP-HMAC port knocking; knock ports do not need host firewall allow rules
 - Temporary allowlist for protected TCP and UDP ports
 - Automatic allowlist refresh when the client public IP changes
 - Automatic refresh before the server-side open timeout expires
